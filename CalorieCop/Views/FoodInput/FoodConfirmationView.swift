@@ -120,6 +120,9 @@ struct FoodConfirmationView: View {
             )
             modelContext.insert(preference)
         }
+
+        // Save immediately so it appears in the preferences list
+        try? modelContext.save()
     }
 
     private var headerSection: some View {
