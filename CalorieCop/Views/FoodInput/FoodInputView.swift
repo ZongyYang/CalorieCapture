@@ -22,7 +22,6 @@ struct FoodInputView: View {
 
     // Food preferences
     @State private var preferenceSearchText = ""
-    @State private var editingPreference: FoodPreference?
     @State private var showingDeleteConfirmation = false
     @State private var preferenceToDelete: FoodPreference?
 
@@ -90,9 +89,6 @@ struct FoodInputView: View {
                 Button("好的", role: .cancel) {}
             } message: {
                 Text("请在真机上使用相机功能，或从相册选择图片。")
-            }
-            .sheet(item: $editingPreference) { preference in
-                EditPreferenceView(preference: preference)
             }
             .alert("删除习惯", isPresented: $showingDeleteConfirmation) {
                 Button("取消", role: .cancel) {}
@@ -310,7 +306,6 @@ struct FoodInputView: View {
                         PreferenceRowWithActions(
                             preference: pref,
                             onTap: { addPreferenceAsFood(pref) },
-                            onEdit: { editingPreference = pref },
                             onDelete: {
                                 preferenceToDelete = pref
                                 showingDeleteConfirmation = true
@@ -327,7 +322,7 @@ struct FoodInputView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
 
-            Text("点击添加 | 编辑或删除用右侧按钮")
+            Text("点击添加并编辑 | 删除用右侧按钮")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -798,7 +793,6 @@ struct CameraView: UIViewControllerRepresentable {
 struct PreferenceRowWithActions: View {
     let preference: FoodPreference
     let onTap: () -> Void
-    let onEdit: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -846,16 +840,6 @@ struct PreferenceRowWithActions: View {
             }
             .buttonStyle(.plain)
 
-            // Edit button
-            Button {
-                onEdit()
-            } label: {
-                Image(systemName: "pencil.circle")
-                    .font(.title3)
-                    .foregroundStyle(.blue)
-            }
-            .buttonStyle(.plain)
-
             // Delete button
             Button {
                 onDelete()
@@ -868,125 +852,6 @@ struct PreferenceRowWithActions: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-    }
-}
-
-// MARK: - Edit Preference View
-
-struct EditPreferenceView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
-
-    let preference: FoodPreference
-
-    @State private var keyword: String = ""
-    @State private var grams: String = ""
-    @State private var calories: String = ""
-    @State private var protein: String = ""
-    @State private var carbs: String = ""
-    @State private var fat: String = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("食物名称") {
-                    TextField("名称", text: $keyword)
-                }
-
-                Section("营养信息") {
-                    HStack {
-                        Text("克重")
-                        Spacer()
-                        TextField("0", text: $grams)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                        Text("g")
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("热量")
-                        Spacer()
-                        TextField("0", text: $calories)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                        Text("kcal")
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("蛋白质")
-                        Spacer()
-                        TextField("0", text: $protein)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                        Text("g")
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("碳水化合物")
-                        Spacer()
-                        TextField("0", text: $carbs)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                        Text("g")
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("脂肪")
-                        Spacer()
-                        TextField("0", text: $fat)
-                            .keyboardType(.decimalPad)
-                            .multilineTextAlignment(.trailing)
-                            .frame(width: 80)
-                        Text("g")
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .navigationTitle("编辑习惯")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") {
-                        saveChanges()
-                        dismiss()
-                    }
-                    .fontWeight(.semibold)
-                }
-            }
-            .onAppear {
-                keyword = preference.keyword
-                grams = preference.defaultGrams.map { String(format: "%.1f", $0) } ?? ""
-                calories = preference.defaultCalories.map { String(format: "%.0f", $0) } ?? ""
-                protein = preference.defaultProtein.map { String(format: "%.1f", $0) } ?? ""
-                carbs = preference.defaultCarbs.map { String(format: "%.1f", $0) } ?? ""
-                fat = preference.defaultFat.map { String(format: "%.1f", $0) } ?? ""
-            }
-        }
-    }
-
-    private func saveChanges() {
-        preference.keyword = keyword
-        preference.defaultGrams = Double(grams)
-        preference.defaultCalories = Double(calories)
-        preference.defaultProtein = Double(protein)
-        preference.defaultCarbs = Double(carbs)
-        preference.defaultFat = Double(fat)
-
-        // Update description
-        if let g = preference.defaultGrams, let c = preference.defaultCalories {
-            preference.defaultDescription = "\(Int(g))g, \(Int(c))kcal"
-        }
-
-        try? modelContext.save()
     }
 }
 
