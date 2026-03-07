@@ -22,8 +22,9 @@ struct FoodInputView: View {
 
     // Food preferences
     @State private var preferenceSearchText = ""
-    @State private var showingPreferencesList = false
     @State private var editingPreference: FoodPreference?
+    @State private var showingDeleteConfirmation = false
+    @State private var preferenceToDelete: FoodPreference?
 
     private let aiService = MiniMaxService()
 
@@ -90,15 +91,19 @@ struct FoodInputView: View {
             } message: {
                 Text("请在真机上使用相机功能，或从相册选择图片。")
             }
-            .sheet(isPresented: $showingPreferencesList) {
-                FoodPreferencesListView(
-                    onSelect: { preference in
-                        addPreferenceAsFood(preference)
-                    }
-                )
-            }
             .sheet(item: $editingPreference) { preference in
                 EditPreferenceView(preference: preference)
+            }
+            .alert("删除习惯", isPresented: $showingDeleteConfirmation) {
+                Button("取消", role: .cancel) {}
+                Button("删除", role: .destructive) {
+                    if let pref = preferenceToDelete {
+                        modelContext.delete(pref)
+                        try? modelContext.save()
+                    }
+                }
+            } message: {
+                Text("确定要删除这个食物习惯吗？")
             }
             .onChange(of: selectedPhoto) {
                 Task {
@@ -250,6 +255,13 @@ struct FoodInputView: View {
         !inputText.isEmpty || selectedImage != nil
     }
 
+    private var filteredPreferences: [FoodPreference] {
+        if preferenceSearchText.isEmpty {
+            return foodPreferences
+        }
+        return foodPreferences.filter { $0.keyword.localizedCaseInsensitiveContains(preferenceSearchText) }
+    }
+
     private var savedPreferencesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -259,33 +271,63 @@ struct FoodInputView: View {
                 Text("\(foodPreferences.count)项")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button {
-                    showingPreferencesList = true
-                } label: {
-                    Text("全部")
-                        .font(.subheadline)
-                }
             }
 
-            // Vertical list of recent preferences (top 5)
-            let recentPrefs = Array(foodPreferences.prefix(5))
-            VStack(spacing: 0) {
-                ForEach(recentPrefs, id: \.id) { pref in
-                    PreferenceRowCompact(
-                        preference: pref,
-                        onTap: { addPreferenceAsFood(pref) },
-                        onEdit: { editingPreference = pref }
-                    )
-
-                    if pref.id != recentPrefs.last?.id {
-                        Divider()
+            // Search bar
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("搜索食物习惯", text: $preferenceSearchText)
+                    .textFieldStyle(.plain)
+                if !preferenceSearchText.isEmpty {
+                    Button {
+                        preferenceSearchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(10)
+            .background(Color(.systemGray6))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
 
-            Text("点击添加，右侧按钮编辑")
+            // All preferences list
+            if filteredPreferences.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: preferenceSearchText.isEmpty ? "heart.slash" : "magnifyingglass")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text(preferenceSearchText.isEmpty ? "暂无保存的习惯" : "未找到匹配的食物")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(filteredPreferences, id: \.id) { pref in
+                        PreferenceRowWithActions(
+                            preference: pref,
+                            onTap: { addPreferenceAsFood(pref) },
+                            onEdit: { editingPreference = pref },
+                            onDelete: {
+                                preferenceToDelete = pref
+                                showingDeleteConfirmation = true
+                            }
+                        )
+
+                        if pref.id != filteredPreferences.last?.id {
+                            Divider()
+                                .padding(.leading, 12)
+                        }
+                    }
+                }
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+
+            Text("点击添加 | 编辑或删除用右侧按钮")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -709,16 +751,17 @@ struct CameraView: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - Preference Row Compact (for main input view)
+// MARK: - Preference Row With Actions
 
-struct PreferenceRowCompact: View {
+struct PreferenceRowWithActions: View {
     let preference: FoodPreference
     let onTap: () -> Void
     let onEdit: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
-        HStack {
-            // Tap to add
+        HStack(spacing: 8) {
+            // Tap to add - main content area
             Button {
                 onTap()
             } label: {
@@ -743,6 +786,10 @@ struct PreferenceRowCompact: View {
                             }
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
+                        } else {
+                            Text("暂无营养数据")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
                         }
                     }
 
@@ -766,163 +813,19 @@ struct PreferenceRowCompact: View {
                     .foregroundStyle(.blue)
             }
             .buttonStyle(.plain)
+
+            // Delete button
+            Button {
+                onDelete()
+            } label: {
+                Image(systemName: "trash.circle")
+                    .font(.title3)
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-    }
-}
-
-// MARK: - Food Preferences List View
-
-struct FoodPreferencesListView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: \FoodPreference.usageCount, order: .reverse) private var foodPreferences: [FoodPreference]
-
-    @State private var searchText = ""
-    @State private var editingPreference: FoodPreference?
-    @State private var showingDeleteConfirmation = false
-    @State private var preferenceToDelete: FoodPreference?
-
-    let onSelect: (FoodPreference) -> Void
-
-    private var filteredPreferences: [FoodPreference] {
-        if searchText.isEmpty {
-            return foodPreferences
-        }
-        return foodPreferences.filter { pref in
-            pref.keyword.localizedCaseInsensitiveContains(searchText)
-        }
-    }
-
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // Always visible search bar at top
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(.secondary)
-                    TextField("搜索食物习惯", text: $searchText)
-                        .textFieldStyle(.plain)
-                    if !searchText.isEmpty {
-                        Button {
-                            searchText = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
-                .padding(10)
-                .background(Color(.systemGray6))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(.horizontal)
-                .padding(.top, 8)
-                .padding(.bottom, 4)
-
-                // Food list
-                if filteredPreferences.isEmpty {
-                    Spacer()
-                    ContentUnavailableView(
-                        searchText.isEmpty ? "暂无保存的习惯" : "未找到匹配的食物",
-                        systemImage: searchText.isEmpty ? "heart.slash" : "magnifyingglass",
-                        description: Text(searchText.isEmpty ? "确认食物时选择\"记住这个习惯\"来保存" : "尝试其他关键词")
-                    )
-                    Spacer()
-                } else {
-                    List {
-                        ForEach(filteredPreferences, id: \.id) { preference in
-                            PreferenceRowFull(preference: preference)
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    onSelect(preference)
-                                    dismiss()
-                                }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                    Button(role: .destructive) {
-                                        preferenceToDelete = preference
-                                        showingDeleteConfirmation = true
-                                    } label: {
-                                        Label("删除", systemImage: "trash")
-                                    }
-
-                                    Button {
-                                        editingPreference = preference
-                                    } label: {
-                                        Label("编辑", systemImage: "pencil")
-                                    }
-                                    .tint(.blue)
-                                }
-                        }
-                    }
-                    .listStyle(.plain)
-                }
-            }
-            .navigationTitle("食物习惯")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("完成") {
-                        dismiss()
-                    }
-                }
-            }
-            .sheet(item: $editingPreference) { preference in
-                EditPreferenceView(preference: preference)
-            }
-            .alert("删除习惯", isPresented: $showingDeleteConfirmation) {
-                Button("取消", role: .cancel) {}
-                Button("删除", role: .destructive) {
-                    if let pref = preferenceToDelete {
-                        modelContext.delete(pref)
-                        try? modelContext.save()
-                    }
-                }
-            } message: {
-                Text("确定要删除这个食物习惯吗？")
-            }
-        }
-    }
-}
-
-struct PreferenceRowFull: View {
-    let preference: FoodPreference
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(preference.keyword)
-                    .font(.headline)
-                Spacer()
-                if let calories = preference.defaultCalories {
-                    Text("\(Int(calories)) kcal")
-                        .font(.subheadline)
-                        .foregroundStyle(.orange)
-                }
-            }
-
-            if let grams = preference.defaultGrams {
-                HStack(spacing: 8) {
-                    Text("\(Int(grams))g")
-                    if let protein = preference.defaultProtein {
-                        Text("蛋白\(String(format: "%.1f", protein))g")
-                    }
-                    if let carbs = preference.defaultCarbs {
-                        Text("碳水\(String(format: "%.1f", carbs))g")
-                    }
-                    if let fat = preference.defaultFat {
-                        Text("脂肪\(String(format: "%.1f", fat))g")
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-
-            Text("使用 \(preference.usageCount) 次")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
-        }
-        .padding(.vertical, 4)
     }
 }
 
