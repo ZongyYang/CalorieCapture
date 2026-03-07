@@ -3,10 +3,8 @@ import UIKit
 
 final class MiniMaxService: AIServiceProtocol {
     private let endpoint = URL(string: "https://api.minimaxi.chat/v1/text/chatcompletion_v2")!
-    // MiniMax-M2.5 is the latest model with best performance
-    private let model = "MiniMax-M2.5"
-    // MiniMax-M1 for vision/multimodal tasks
-    private let visionModel = "MiniMax-M1"
+    // MiniMax-M2.5-highspeed for fast text parsing (~3s vs ~11s for regular M2.5)
+    private let model = "MiniMax-M2.5-highspeed"
     private let logger = DebugLogger.shared
 
     func parseFoodInput(_ input: String) async throws -> NutritionInfo {
