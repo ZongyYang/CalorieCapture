@@ -448,12 +448,14 @@ struct EditingItem: Identifiable {
 
 struct MultipleFoodConfirmationView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
 
     let onConfirm: ([NutritionInfo]) -> Void
 
     @State private var editableList: [NutritionInfo]
     @State private var selectedItems: Set<Int>
     @State private var editingItem: EditingItem?
+    @State private var saveAsPreferences: Set<Int> = []  // Track which items to save as preferences
 
     init(nutritionList: [NutritionInfo], onConfirm: @escaping ([NutritionInfo]) -> Void) {
         self.onConfirm = onConfirm
@@ -478,7 +480,7 @@ struct MultipleFoodConfirmationView: View {
                     Text("总热量: \(Int(totalCalories)) kcal")
                         .font(.subheadline)
                         .foregroundStyle(.orange)
-                    Text("点击编辑按钮可修改")
+                    Text("点击❤️保存习惯，点击✏️编辑")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -492,6 +494,7 @@ struct MultipleFoodConfirmationView: View {
                         MultipleFoodRow(
                             nutrition: nutrition,
                             isSelected: selectedItems.contains(index),
+                            isSavingAsPreference: saveAsPreferences.contains(index),
                             onToggle: {
                                 if selectedItems.contains(index) {
                                     selectedItems.remove(index)
@@ -501,6 +504,13 @@ struct MultipleFoodConfirmationView: View {
                             },
                             onEdit: {
                                 editingItem = EditingItem(id: index, nutrition: nutrition)
+                            },
+                            onToggleSavePreference: {
+                                if saveAsPreferences.contains(index) {
+                                    saveAsPreferences.remove(index)
+                                } else {
+                                    saveAsPreferences.insert(index)
+                                }
                             }
                         )
                     }
@@ -517,6 +527,13 @@ struct MultipleFoodConfirmationView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("确认 (\(selectedItems.count))") {
+                        // Save preferences for marked items
+                        for index in saveAsPreferences {
+                            if index < editableList.count {
+                                savePreference(editableList[index])
+                            }
+                        }
+
                         let confirmed = selectedItems.sorted().compactMap { index in
                             index < editableList.count ? editableList[index] : nil
                         }
@@ -539,13 +556,28 @@ struct MultipleFoodConfirmationView: View {
             }
         }
     }
+
+    private func savePreference(_ nutrition: NutritionInfo) {
+        let preference = FoodPreference(
+            keyword: nutrition.foodName,
+            grams: nutrition.grams,
+            calories: nutrition.calories,
+            protein: nutrition.protein,
+            carbs: nutrition.carbohydrates,
+            fat: nutrition.fat
+        )
+        modelContext.insert(preference)
+        try? modelContext.save()
+    }
 }
 
 struct MultipleFoodRow: View {
     let nutrition: NutritionInfo
     let isSelected: Bool
+    let isSavingAsPreference: Bool
     let onToggle: () -> Void
     let onEdit: () -> Void
+    let onToggleSavePreference: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -583,6 +615,16 @@ struct MultipleFoodRow: View {
             }
 
             Spacer()
+
+            // Save as preference button
+            Button {
+                onToggleSavePreference()
+            } label: {
+                Image(systemName: isSavingAsPreference ? "heart.fill" : "heart")
+                    .font(.title2)
+                    .foregroundStyle(isSavingAsPreference ? .pink : .gray)
+            }
+            .buttonStyle(.plain)
 
             // Edit button
             Button {
