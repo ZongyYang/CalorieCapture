@@ -96,16 +96,33 @@ struct FoodConfirmationView: View {
     }
 
     private func savePreference() {
+        let nutrition = editedNutrition
+
         // Check if preference already exists
         if let existing = existingPreferences.first(where: { $0.keyword.lowercased() == preferenceKeyword.lowercased() }) {
-            // Update existing
+            // Update existing with new values
             existing.defaultDescription = preferenceDescription
+            existing.defaultGrams = nutrition.grams
+            existing.defaultCalories = nutrition.calories
+            existing.defaultProtein = nutrition.protein
+            existing.defaultCarbs = nutrition.carbohydrates
+            existing.defaultFat = nutrition.fat
             existing.usageCount += 1
         } else {
-            // Create new
-            let preference = FoodPreference(keyword: preferenceKeyword, defaultDescription: preferenceDescription)
+            // Create new with nutrition values
+            let preference = FoodPreference(
+                keyword: preferenceKeyword,
+                grams: nutrition.grams,
+                calories: nutrition.calories,
+                protein: nutrition.protein,
+                carbs: nutrition.carbohydrates,
+                fat: nutrition.fat
+            )
             modelContext.insert(preference)
         }
+
+        // Save immediately so it appears in the preferences list
+        try? modelContext.save()
     }
 
     private var headerSection: some View {

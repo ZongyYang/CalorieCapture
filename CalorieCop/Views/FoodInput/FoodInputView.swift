@@ -5,14 +5,14 @@ import PhotosUI
 struct FoodInputView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \FoodPreference.usageCount, order: .reverse) private var foodPreferences: [FoodPreference]
-    @Query(sort: \FoodEntry.createdAt, order: .reverse) private var recentEntries: [FoodEntry]
 
     @State private var inputText = ""
     @State private var isLoading = false
     @State private var parsedNutrition: NutritionInfo?
+    @State private var parsedNutritionList: [NutritionInfo] = []
     @State private var errorMessage: String?
     @State private var showConfirmation = false
-    @State private var showTextInput = false
+    @State private var showMultipleConfirmation = false
 
     // Image picker
     @State private var selectedPhoto: PhotosPickerItem?
@@ -20,59 +20,48 @@ struct FoodInputView: View {
     @State private var showingCamera = false
     @State private var showingCameraAlert = false
 
+    // Food preferences
+    @State private var preferenceSearchText = ""
+    @State private var showingDeleteConfirmation = false
+    @State private var preferenceToDelete: FoodPreference?
+
     private let aiService = MiniMaxService()
 
     private var isCameraAvailable: Bool {
         UIImagePickerController.isSourceTypeAvailable(.camera)
     }
 
-    // Get recent unique foods (last 10)
-    private var recentFoods: [FoodEntry] {
-        var seen = Set<String>()
-        return recentEntries.filter { entry in
-            guard !seen.contains(entry.foodName) else { return false }
-            seen.insert(entry.foodName)
-            return true
-        }.prefix(10).map { $0 }
-    }
-
-    // Matching foods based on input text
-    private var matchingFoods: [FoodEntry] {
-        if inputText.isEmpty {
-            return []
-        }
-        return recentFoods.filter {
-            $0.foodName.localizedCaseInsensitiveContains(inputText)
-        }
-    }
-
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    // Input methods (camera, photo, text)
-                    cameraSection
+                    instructionText
 
-                    // Text input (shown when no image selected)
-                    if showTextInput || selectedImage != nil {
-                        textInputSection
+                    // Image input section
+                    imageInputSection
 
-                        // Matching foods when typing
-                        if !matchingFoods.isEmpty && selectedImage == nil {
-                            matchingFoodsSection
-                        }
+                    // Dynamic divider text based on whether image is selected
+                    if selectedImage != nil {
+                        dividerWithText("补充说明 (可选)")
+                    } else {
+                        dividerWithText("或直接输入文字")
                     }
+
+                    // Text input section
+                    inputField
 
                     if let error = errorMessage {
                         errorView(error)
                     }
+
+                    parseButton
+
+                    // Food preferences section
+                    if !foodPreferences.isEmpty {
+                        savedPreferencesSection
+                    }
                 }
                 .padding()
-            }
-            .background(Color(.systemGroupedBackground))
-            .contentShape(Rectangle())
-            .onTapGesture {
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             }
             .navigationTitle("记录食物")
             .sheet(isPresented: $showConfirmation) {
@@ -88,32 +77,59 @@ struct FoodInputView: View {
             .sheet(isPresented: $showingCamera) {
                 CameraView(image: $selectedImage)
             }
+            .sheet(isPresented: $showMultipleConfirmation) {
+                MultipleFoodConfirmationView(
+                    nutritionList: parsedNutritionList,
+                    onConfirm: { confirmedList in
+                        saveMultipleFoodEntries(confirmedList)
+                    }
+                )
+            }
             .alert("相机不可用", isPresented: $showingCameraAlert) {
                 Button("好的", role: .cancel) {}
             } message: {
                 Text("请在真机上使用相机功能，或从相册选择图片。")
+            }
+            .alert("删除习惯", isPresented: $showingDeleteConfirmation) {
+                Button("取消", role: .cancel) {}
+                Button("删除", role: .destructive) {
+                    if let pref = preferenceToDelete {
+                        modelContext.delete(pref)
+                        try? modelContext.save()
+                    }
+                }
+            } message: {
+                Text("确定要删除这个食物习惯吗？")
             }
             .onChange(of: selectedPhoto) {
                 Task {
                     if let data = try? await selectedPhoto?.loadTransferable(type: Data.self),
                        let image = UIImage(data: data) {
                         selectedImage = image
-                        showTextInput = true
                     }
                 }
+            }
+            .onTapGesture {
+                // Dismiss keyboard when tapping outside text field
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             }
         }
     }
 
-    private var cameraSection: some View {
-        VStack(spacing: 16) {
+    private var instructionText: some View {
+        Text("拍照识别食物，可配合文字补充说明")
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+    }
+
+    private var imageInputSection: some View {
+        VStack(spacing: 12) {
             if let image = selectedImage {
-                // Show selected image
                 Image(uiImage: image)
                     .resizable()
                     .scaledToFill()
                     .frame(height: 200)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
                     .overlay(alignment: .topTrailing) {
                         Button {
                             selectedImage = nil
@@ -126,128 +142,72 @@ struct FoodInputView: View {
                         }
                         .padding(8)
                     }
-
-                // Parse button
-                Button {
-                    Task { await parseFood() }
-                } label: {
-                    HStack {
-                        if isLoading {
-                            ProgressView().tint(.white)
-                        } else {
-                            Image(systemName: "eye.fill")
-                            Text("识别食物")
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                .disabled(isLoading)
             } else {
-                // Three input method cards
-                HStack(spacing: 12) {
-                    // Camera card
-                    InputMethodCard(
-                        icon: "camera.fill",
-                        title: "拍照",
-                        color: .blue,
-                        isSelected: false
-                    ) {
+                HStack(spacing: 16) {
+                    // Camera button
+                    Button {
                         if isCameraAvailable {
                             showingCamera = true
                         } else {
                             showingCameraAlert = true
                         }
+                    } label: {
+                        VStack(spacing: 8) {
+                            Image(systemName: "camera.fill")
+                                .font(.title)
+                            Text("拍照")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                        .background(Color(.systemGray6))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
 
-                    // Photo library card
+                    // Photo library button
                     PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                        InputMethodCardContent(
-                            icon: "photo.fill",
-                            title: "相册",
-                            color: .green,
-                            isSelected: false
-                        )
-                    }
-
-                    // Text input card
-                    InputMethodCard(
-                        icon: "keyboard",
-                        title: "文字",
-                        color: .orange,
-                        isSelected: showTextInput
-                    ) {
-                        showTextInput.toggle()
+                        VStack(spacing: 8) {
+                            Image(systemName: "photo.fill")
+                                .font(.title)
+                            Text("相册")
+                                .font(.caption)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 24)
+                        .background(Color(.systemGray6))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
-
-                // Mascot speech bubble
-                HStack {
-                    Spacer()
-                    HStack(spacing: 8) {
-                        Text("拍照或输入文字记录你的饮食~")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-
-                        Image("mascot_avatar")
-                            .resizable()
-                            .scaledToFit()
-                            .frame(width: 40, height: 40)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .black.opacity(0.05), radius: 4)
-                }
+                .foregroundStyle(.primary)
             }
         }
     }
 
-    private var textInputSection: some View {
-        VStack(spacing: 12) {
-            if selectedImage == nil {
-                Text("描述你吃的食物")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
+    private func dividerWithText(_ text: String) -> some View {
+        HStack {
+            Rectangle()
+                .fill(Color(.systemGray4))
+                .frame(height: 1)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Rectangle()
+                .fill(Color(.systemGray4))
+                .frame(height: 1)
+        }
+    }
 
-            TextField(
-                selectedImage != nil ? "补充说明（可选）" : "例如：一碗米饭、两个鸡蛋",
-                text: $inputText,
-                axis: .vertical
-            )
+    private var inputField: some View {
+        let placeholder = selectedImage != nil
+            ? "补充说明：如份量、时间等（可选）"
+            : "例如：一碗米饭、两个鸡蛋、昨天的晚餐"
+
+        return TextField(placeholder, text: $inputText, axis: .vertical)
             .textFieldStyle(.plain)
             .padding()
-            .background(Color(.systemBackground))
+            .background(Color(.systemGray6))
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .lineLimit(2...4)
-
-            if selectedImage == nil && !inputText.isEmpty {
-                Button {
-                    Task { await parseFood() }
-                } label: {
-                    HStack {
-                        if isLoading {
-                            ProgressView().tint(.white)
-                        } else {
-                            Image(systemName: "sparkles")
-                            Text("解析食物")
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.blue)
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
-                }
-                .disabled(isLoading)
-            }
-        }
+            .lineLimit(3...6)
     }
 
     private func errorView(_ message: String) -> some View {
@@ -263,43 +223,145 @@ struct FoodInputView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
-    private var matchingFoodsSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("匹配的食物")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+    private var parseButton: some View {
+        Button {
+            Task {
+                await parseFood()
+            }
+        } label: {
+            HStack {
+                if isLoading {
+                    ProgressView()
+                        .tint(.white)
+                } else {
+                    Image(systemName: selectedImage != nil ? "eye.fill" : "sparkles")
+                    Text(selectedImage != nil ? "识别食物" : "解析食物")
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .padding()
+            .background(canParse ? Color.blue : Color.gray)
+            .foregroundStyle(.white)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+        }
+        .disabled(!canParse || isLoading)
+    }
 
-            VStack(spacing: 0) {
-                ForEach(matchingFoods) { entry in
-                    RecentFoodRow(entry: entry) {
-                        quickAddFood(entry)
-                    }
-                    if entry.id != matchingFoods.last?.id {
-                        Divider().padding(.leading, 56)
+    private var canParse: Bool {
+        !inputText.isEmpty || selectedImage != nil
+    }
+
+    private var filteredPreferences: [FoodPreference] {
+        if preferenceSearchText.isEmpty {
+            return foodPreferences
+        }
+        return foodPreferences.filter { $0.keyword.localizedCaseInsensitiveContains(preferenceSearchText) }
+    }
+
+    private var savedPreferencesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("已保存的食物习惯")
+                    .font(.headline)
+                Spacer()
+                Text("\(foodPreferences.count)项")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Search bar
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("搜索食物习惯", text: $preferenceSearchText)
+                    .textFieldStyle(.plain)
+                if !preferenceSearchText.isEmpty {
+                    Button {
+                        preferenceSearchText = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(10)
+            .background(Color(.systemGray6))
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+
+            // All preferences list
+            if filteredPreferences.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: preferenceSearchText.isEmpty ? "heart.slash" : "magnifyingglass")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text(preferenceSearchText.isEmpty ? "暂无保存的习惯" : "未找到匹配的食物")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 20)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(filteredPreferences, id: \.id) { pref in
+                        PreferenceRowWithActions(
+                            preference: pref,
+                            onTap: { addPreferenceAsFood(pref) },
+                            onDelete: {
+                                preferenceToDelete = pref
+                                showingDeleteConfirmation = true
+                            }
+                        )
+
+                        if pref.id != filteredPreferences.last?.id {
+                            Divider()
+                                .padding(.leading, 12)
+                        }
+                    }
+                }
+                .background(Color(.systemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+
+            Text("点击添加并编辑 | 删除用右侧按钮")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
+    private func addPreferenceAsFood(_ preference: FoodPreference) {
+        // If we have complete nutrition data, add directly
+        if let grams = preference.defaultGrams,
+           let calories = preference.defaultCalories,
+           let protein = preference.defaultProtein,
+           let carbs = preference.defaultCarbs,
+           let fat = preference.defaultFat {
+            let nutrition = NutritionInfo(
+                foodName: preference.keyword,
+                grams: grams,
+                calories: calories,
+                protein: protein,
+                carbohydrates: carbs,
+                fat: fat,
+                confidence: "saved",
+                notes: "从已保存习惯添加",
+                daysAgo: 0
+            )
 
-    private func quickAddFood(_ entry: FoodEntry) {
-        let newEntry = FoodEntry(
-            rawInput: "快速添加: \(entry.foodName)",
-            foodName: entry.foodName,
-            grams: entry.grams,
-            calories: entry.calories,
-            protein: entry.protein,
-            carbohydrates: entry.carbohydrates,
-            fat: entry.fat
-        )
-        modelContext.insert(newEntry)
-        try? modelContext.save()
+            // Update usage count
+            preference.usageCount += 1
+            try? modelContext.save()
+
+            // Show confirmation for review
+            parsedNutrition = nutrition
+            showConfirmation = true
+        } else {
+            // No complete data, use as input text
+            inputText = preference.keyword
+        }
     }
 
     private func parseFood() async {
+        // Dismiss keyboard first
         _ = await MainActor.run {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         }
@@ -308,16 +370,27 @@ struct FoodInputView: View {
         errorMessage = nil
 
         do {
-            let nutrition: NutritionInfo
+            let nutritionList: [NutritionInfo]
 
             if let image = selectedImage {
-                nutrition = try await aiService.parseFoodImage(image, additionalContext: inputText.isEmpty ? nil : inputText, preferences: foodPreferences)
+                // Image parsing now supports multiple items via Qwen VL Plus
+                nutritionList = try await aiService.parseFoodImageMultiple(image, additionalContext: inputText.isEmpty ? nil : inputText, preferences: foodPreferences)
             } else {
-                nutrition = try await aiService.parseFoodInput(inputText, preferences: foodPreferences)
+                // Text parsing supports multiple items
+                nutritionList = try await aiService.parseFoodInputMultiple(inputText, preferences: foodPreferences)
             }
 
-            parsedNutrition = nutrition
-            showConfirmation = true
+            if nutritionList.count == 1 {
+                // Single item - show normal confirmation
+                parsedNutrition = nutritionList.first
+                showConfirmation = true
+            } else if nutritionList.count > 1 {
+                // Multiple items - show multiple confirmation
+                parsedNutritionList = nutritionList
+                showMultipleConfirmation = true
+            } else {
+                errorMessage = "未能识别任何食物"
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -328,69 +401,351 @@ struct FoodInputView: View {
     private func saveFoodEntry(with nutrition: NutritionInfo) {
         let entry = FoodEntry(rawInput: inputText.isEmpty ? "图片识别: \(nutrition.foodName)" : inputText, nutrition: nutrition)
         modelContext.insert(entry)
+
+        // Explicitly save to ensure Dashboard updates immediately
         try? modelContext.save()
 
+        // Reset state
         inputText = ""
         selectedImage = nil
         selectedPhoto = nil
         parsedNutrition = nil
         showConfirmation = false
-        showTextInput = false
+
+        // Dismiss keyboard
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func saveMultipleFoodEntries(_ nutritionList: [NutritionInfo]) {
+        for nutrition in nutritionList {
+            let entry = FoodEntry(rawInput: inputText, nutrition: nutrition)
+            modelContext.insert(entry)
+        }
+        try? modelContext.save()
+
+        inputText = ""
+        selectedImage = nil
+        selectedPhoto = nil
+        parsedNutritionList = []
+        showMultipleConfirmation = false
 
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 }
 
-// MARK: - Recent Food Row
+// MARK: - Multiple Food Confirmation View
 
-struct RecentFoodRow: View {
-    let entry: FoodEntry
-    let onAdd: () -> Void
+// Wrapper to make index identifiable for sheet(item:)
+struct EditingItem: Identifiable {
+    let id: Int
+    let nutrition: NutritionInfo
+}
+
+struct MultipleFoodConfirmationView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+
+    let onConfirm: ([NutritionInfo]) -> Void
+
+    @State private var editableList: [NutritionInfo]
+    @State private var selectedItems: Set<Int>
+    @State private var editingItem: EditingItem?
+    @State private var saveAsPreferences: Set<Int> = []  // Track which items to save as preferences
+
+    init(nutritionList: [NutritionInfo], onConfirm: @escaping ([NutritionInfo]) -> Void) {
+        self.onConfirm = onConfirm
+        self._editableList = State(initialValue: nutritionList)
+        self._selectedItems = State(initialValue: Set(0..<nutritionList.count))
+    }
+
+    private var totalCalories: Double {
+        selectedItems.reduce(0) { sum, index in
+            guard index < editableList.count else { return sum }
+            return sum + editableList[index].calories
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // Summary header
+                VStack(spacing: 8) {
+                    Text("识别到 \(editableList.count) 种食物")
+                        .font(.headline)
+                    Text("总热量: \(Int(totalCalories)) kcal")
+                        .font(.subheadline)
+                        .foregroundStyle(.orange)
+                    Text("点击❤️保存习惯，点击✏️编辑")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding()
+                .frame(maxWidth: .infinity)
+                .background(Color(.systemGray6))
+
+                // Food list
+                List {
+                    ForEach(Array(editableList.enumerated()), id: \.offset) { index, nutrition in
+                        MultipleFoodRow(
+                            nutrition: nutrition,
+                            isSelected: selectedItems.contains(index),
+                            isSavingAsPreference: saveAsPreferences.contains(index),
+                            onToggle: {
+                                if selectedItems.contains(index) {
+                                    selectedItems.remove(index)
+                                } else {
+                                    selectedItems.insert(index)
+                                }
+                            },
+                            onEdit: {
+                                editingItem = EditingItem(id: index, nutrition: nutrition)
+                            },
+                            onToggleSavePreference: {
+                                if saveAsPreferences.contains(index) {
+                                    saveAsPreferences.remove(index)
+                                } else {
+                                    saveAsPreferences.insert(index)
+                                }
+                            }
+                        )
+                    }
+                }
+                .listStyle(.plain)
+            }
+            .navigationTitle("确认食物")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("确认 (\(selectedItems.count))") {
+                        // Save preferences for marked items
+                        for index in saveAsPreferences {
+                            if index < editableList.count {
+                                savePreference(editableList[index])
+                            }
+                        }
+
+                        let confirmed = selectedItems.sorted().compactMap { index in
+                            index < editableList.count ? editableList[index] : nil
+                        }
+                        onConfirm(confirmed)
+                        dismiss()
+                    }
+                    .disabled(selectedItems.isEmpty)
+                    .fontWeight(.semibold)
+                }
+            }
+            .sheet(item: $editingItem) { item in
+                SingleFoodEditView(
+                    nutrition: item.nutrition,
+                    onSave: { updatedNutrition in
+                        if item.id < editableList.count {
+                            editableList[item.id] = updatedNutrition
+                        }
+                    }
+                )
+            }
+        }
+    }
+
+    private func savePreference(_ nutrition: NutritionInfo) {
+        let preference = FoodPreference(
+            keyword: nutrition.foodName,
+            grams: nutrition.grams,
+            calories: nutrition.calories,
+            protein: nutrition.protein,
+            carbs: nutrition.carbohydrates,
+            fat: nutrition.fat
+        )
+        modelContext.insert(preference)
+        try? modelContext.save()
+    }
+}
+
+struct MultipleFoodRow: View {
+    let nutrition: NutritionInfo
+    let isSelected: Bool
+    let isSavingAsPreference: Bool
+    let onToggle: () -> Void
+    let onEdit: () -> Void
+    let onToggleSavePreference: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
-            // Food icon
-            Text(foodEmoji(for: entry.foodName))
-                .font(.title)
-                .frame(width: 44, height: 44)
-                .background(Color.orange.opacity(0.1))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            // Checkbox
+            Button {
+                onToggle()
+            } label: {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(isSelected ? .blue : .gray)
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(entry.foodName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+            // Food info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(nutrition.foodName)
+                    .font(.headline)
 
-                Text("\(Int(entry.calories))kcal/\(Int(entry.grams))g")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Text("\(Int(nutrition.grams))g")
+                    Text("•")
+                    Text("\(Int(nutrition.calories)) kcal")
+                        .foregroundStyle(.orange)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+                HStack(spacing: 8) {
+                    Text("蛋白\(String(format: "%.1f", nutrition.protein))g")
+                    Text("碳水\(String(format: "%.1f", nutrition.carbohydrates))g")
+                    Text("脂肪\(String(format: "%.1f", nutrition.fat))g")
+                }
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
             }
 
             Spacer()
 
-            Button(action: onAdd) {
-                Image(systemName: "plus.circle")
+            // Save as preference button
+            Button {
+                onToggleSavePreference()
+            } label: {
+                Image(systemName: isSavingAsPreference ? "heart.fill" : "heart")
+                    .font(.title2)
+                    .foregroundStyle(isSavingAsPreference ? .pink : .gray)
+            }
+            .buttonStyle(.plain)
+
+            // Edit button
+            Button {
+                onEdit()
+            } label: {
+                Image(systemName: "pencil.circle")
                     .font(.title2)
                     .foregroundStyle(.blue)
             }
+            .buttonStyle(.plain)
         }
-        .padding()
+        .padding(.vertical, 4)
     }
+}
 
-    private func foodEmoji(for name: String) -> String {
-        let emojiMap: [String: String] = [
-            "米饭": "🍚", "面条": "🍜", "鸡蛋": "🥚", "牛奶": "🥛",
-            "苹果": "🍎", "香蕉": "🍌", "鸡肉": "🍗", "牛肉": "🥩",
-            "沙拉": "🥗", "面包": "🍞", "咖啡": "☕️", "酸奶": "🥛",
-            "鱼": "🐟", "虾": "🦐", "蔬菜": "🥬", "玉米": "🌽"
-        ]
+// MARK: - Single Food Edit View
 
-        for (key, emoji) in emojiMap {
-            if name.contains(key) {
-                return emoji
+struct SingleFoodEditView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let nutrition: NutritionInfo
+    let onSave: (NutritionInfo) -> Void
+
+    @State private var foodName: String = ""
+    @State private var grams: String = ""
+    @State private var calories: String = ""
+    @State private var protein: String = ""
+    @State private var carbohydrates: String = ""
+    @State private var fat: String = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("食物信息") {
+                    TextField("食物名称", text: $foodName)
+                    HStack {
+                        Text("克重")
+                        Spacer()
+                        TextField("0", text: $grams)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                        Text("g")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Section("营养成分") {
+                    HStack {
+                        Text("热量")
+                        Spacer()
+                        TextField("0", text: $calories)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                        Text("kcal")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("蛋白质")
+                        Spacer()
+                        TextField("0", text: $protein)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                        Text("g")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("碳水化合物")
+                        Spacer()
+                        TextField("0", text: $carbohydrates)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                        Text("g")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("脂肪")
+                        Spacer()
+                        TextField("0", text: $fat)
+                            .keyboardType(.decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                        Text("g")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("编辑食物")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("保存") {
+                        let updated = NutritionInfo(
+                            foodName: foodName,
+                            grams: Double(grams) ?? nutrition.grams,
+                            calories: Double(calories) ?? nutrition.calories,
+                            protein: Double(protein) ?? nutrition.protein,
+                            carbohydrates: Double(carbohydrates) ?? nutrition.carbohydrates,
+                            fat: Double(fat) ?? nutrition.fat,
+                            confidence: "manual",
+                            notes: "用户手动调整",
+                            daysAgo: nutrition.daysAgo
+                        )
+                        onSave(updated)
+                        dismiss()
+                    }
+                    .fontWeight(.semibold)
+                }
+            }
+            .onAppear {
+                foodName = nutrition.foodName
+                grams = String(format: "%.1f", nutrition.grams)
+                calories = String(format: "%.0f", nutrition.calories)
+                protein = String(format: "%.1f", nutrition.protein)
+                carbohydrates = String(format: "%.1f", nutrition.carbohydrates)
+                fat = String(format: "%.1f", nutrition.fat)
             }
         }
-        return "🍽️"
     }
 }
 
@@ -433,51 +788,74 @@ struct CameraView: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - Input Method Card
+// MARK: - Preference Row With Actions
 
-struct InputMethodCard: View {
-    let icon: String
-    let title: String
-    let color: Color
-    let isSelected: Bool
-    let action: () -> Void
+struct PreferenceRowWithActions: View {
+    let preference: FoodPreference
+    let onTap: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            InputMethodCardContent(icon: icon, title: title, color: color, isSelected: isSelected)
+        HStack(spacing: 8) {
+            // Tap to add - main content area
+            Button {
+                onTap()
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(preference.keyword)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+
+                        if let grams = preference.defaultGrams {
+                            HStack(spacing: 6) {
+                                Text("\(Int(grams))g")
+                                if let protein = preference.defaultProtein {
+                                    Text("蛋白\(String(format: "%.0f", protein))g")
+                                }
+                                if let carbs = preference.defaultCarbs {
+                                    Text("碳水\(String(format: "%.0f", carbs))g")
+                                }
+                                if let fat = preference.defaultFat {
+                                    Text("脂肪\(String(format: "%.0f", fat))g")
+                                }
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        } else {
+                            Text("暂无营养数据")
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+
+                    Spacer()
+
+                    if let calories = preference.defaultCalories {
+                        Text("\(Int(calories)) kcal")
+                            .font(.subheadline)
+                            .foregroundStyle(.orange)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+
+            // Delete button
+            Button {
+                onDelete()
+            } label: {
+                Image(systemName: "trash.circle")
+                    .font(.title3)
+                    .foregroundStyle(.red)
+            }
+            .buttonStyle(.plain)
         }
-    }
-}
-
-struct InputMethodCardContent: View {
-    let icon: String
-    let title: String
-    let color: Color
-    let isSelected: Bool
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.title)
-                .foregroundStyle(isSelected ? .white : color)
-
-            Text(title)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundStyle(isSelected ? .white : .primary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 20)
-        .background(isSelected ? color : Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(isSelected ? color : Color.gray.opacity(0.2), lineWidth: 1)
-        )
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 }
 
 #Preview {
     FoodInputView()
-        .modelContainer(for: FoodEntry.self, inMemory: true)
+        .modelContainer(for: [FoodEntry.self, FoodPreference.self], inMemory: true)
 }

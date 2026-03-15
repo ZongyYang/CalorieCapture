@@ -209,6 +209,7 @@ struct AIAdvisorView: View {
         for message in chatMessages {
             modelContext.delete(message)
         }
+        try? modelContext.save()
     }
 
     private func sendMessage() async {
@@ -241,6 +242,33 @@ struct AIAdvisorView: View {
         }
     }
 
+    private var currentTimeContext: String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "yyyy年M月d日 EEEE HH:mm"
+        let timeString = formatter.string(from: Date())
+
+        let hour = Calendar.current.component(.hour, from: Date())
+        let period: String
+        if hour < 6 {
+            period = "凌晨"
+        } else if hour < 9 {
+            period = "早晨"
+        } else if hour < 11 {
+            period = "上午"
+        } else if hour < 13 {
+            period = "中午"
+        } else if hour < 17 {
+            period = "下午"
+        } else if hour < 19 {
+            period = "傍晚"
+        } else {
+            period = "晚上"
+        }
+
+        return "当前时间：\(timeString)（\(period)）"
+    }
+
     private func askAI(question: String) async throws -> String {
         guard let apiKey = APIKeyManager.miniMaxAPIKey else {
             throw AIServiceError.apiKeyNotConfigured
@@ -248,6 +276,15 @@ struct AIAdvisorView: View {
 
         let systemPrompt = """
 你是一个专业的营养顾问和健身教练AI。用户会向你咨询关于减重、饮食和健康目标的问题。
+
+【当前时间信息】
+\(currentTimeContext)
+
+【重要分析原则】
+1. 当用户问"最近"、"这周"、"过去几天"等问题时，重点分析**已完成的过去几天**的数据，不要把重点放在今天
+2. 今天的数据仅供参考（因为今天还没结束），分析重点应该是昨天及之前的完整数据
+3. 如果是早上或上午，今天摄入少是正常的，不需要特别提醒
+4. 回顾过去几天时，计算平均每日摄入、平均热量缺口、营养素比例等具体数据
 
 以下是用户的完整数据：
 
@@ -257,6 +294,7 @@ struct AIAdvisorView: View {
 - 如果用户问多久能达到目标，请根据当前热量缺口和目标体重差距计算（每减1kg约需消耗7700kcal）
 - 回答要简洁友好，使用中文
 - 如果数据不足，请指出需要哪些信息
+- 当问及"最近"或"一周"时，给出过去几天的具体数据总结，而不是泛泛的建议
 
 格式要求（重要）：
 - 不要使用表格

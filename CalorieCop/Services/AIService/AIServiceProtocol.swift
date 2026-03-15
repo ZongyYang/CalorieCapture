@@ -1,7 +1,11 @@
 import Foundation
+import UIKit
 
 protocol AIServiceProtocol {
     func parseFoodInput(_ input: String) async throws -> NutritionInfo
+    func parseFoodInputMultiple(_ input: String, preferences: [FoodPreference]) async throws -> [NutritionInfo]
+    func parseFoodImage(_ image: UIImage, additionalContext: String?, preferences: [FoodPreference]) async throws -> NutritionInfo
+    func parseFoodImageMultiple(_ image: UIImage, additionalContext: String?, preferences: [FoodPreference]) async throws -> [NutritionInfo]
 }
 
 enum AIServiceError: LocalizedError {
@@ -13,7 +17,7 @@ enum AIServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .apiKeyNotConfigured:
-            return "MiniMax API key not configured. Please set MINIMAX_API_KEY environment variable."
+            return "API key not configured. Please set up your API keys in Secrets.swift."
         case .invalidResponse:
             return "Invalid response from AI service."
         case .networkError(let error):

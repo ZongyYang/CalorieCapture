@@ -13,7 +13,8 @@ To switch versions: `git checkout v0.0.0` or `git checkout v0.0.1`
 
 - **UI**: SwiftUI (iOS 17+)
 - **Storage**: SwiftData
-- **AI**: MiniMax API (text & vision models)
+- **AI Text**: MiniMax API (M2.5-highspeed for fast parsing)
+- **AI Vision**: Qwen VL Plus (image food recognition)
 - **Health**: HealthKit (Apple Watch integration)
 - **Charts**: Swift Charts
 
@@ -57,22 +58,62 @@ All models use `@Model` macro. Schema registered in `CalorieCopApp.swift`:
 ```
 
 ### API Key Setup
-Copy `Secrets.swift.template` to `Secrets.swift` and add your key:
+Copy `Secrets.swift.template` to `Secrets.swift` and add your keys:
 ```swift
 enum Secrets {
-    static let miniMaxAPIKey = "your_key_here"
+    static let miniMaxAPIKey = "your_minimax_key"
+    static let qwenAPIKey = "your_qwen_key"  // For image recognition
 }
 ```
 
 ### MiniMax API
-- Model: `MiniMax-M2.5` (supports both text and vision/multimodal)
+- **Text parsing**: `MiniMax-M2.5-highspeed` (~3s response, 4x faster than regular M2.5)
+- **AI Advisor**: `MiniMax-M2.5-highspeed` for chat
 - Endpoint: `https://api.minimaxi.chat/v1/text/chatcompletion_v2`
-- Note: `MiniMax-VL-01` is open-source only, not available via API
+- Note: MiniMax vision models (M1, VL-01) are NOT available via API
+
+### Qwen VL Plus (Image Recognition)
+- Used for food image parsing (since MiniMax vision unavailable)
+- Model: `qwen-vl-plus`
+- Endpoint: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions` (Singapore)
+- OpenAI-compatible format
+- Supports multiple foods in single image
 
 ### Food Parsing
-AI returns JSON with: `food_name`, `grams`, `calories`, `protein`, `carbohydrates`, `fat`, `confidence`, `notes`, `days_ago`
+AI returns JSON **array** with: `food_name`, `grams`, `calories`, `protein`, `carbohydrates`, `fat`, `confidence`, `notes`, `days_ago`
 
 User preferences are injected into system prompt for personalized parsing.
+
+## Learnings & Gotchas
+
+### SwiftData
+- **Always call `modelContext.save()`** after insert/update/delete for immediate UI refresh
+- `@Query` won't update until context is saved
+- Example: `modelContext.insert(item); try? modelContext.save()`
+
+### SwiftUI Sheets
+- **Use `sheet(item:)` instead of `sheet(isPresented:)` with separate state**
+- Avoids blank sheet on first open due to state timing issues
+- Create an `Identifiable` wrapper if needed:
+```swift
+struct EditingItem: Identifiable {
+    let id: Int
+    let data: SomeType
+}
+@State private var editingItem: EditingItem?
+.sheet(item: $editingItem) { item in ... }
+```
+
+### API Performance Profiling
+Test API response times directly before assuming app-side issues:
+```bash
+# Quick API timing test
+swift -e 'let start = Date(); /* API call */; print(Date().timeIntervalSince(start))'
+```
+
+### Multiple Food Parsing
+- Prompt must specify JSON **array** format, even for single items
+- `extractJSON()` should check for `[` before `{` to handle arrays first
 
 ## Build & Run
 

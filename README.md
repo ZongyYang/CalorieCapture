@@ -10,10 +10,13 @@
 
 ## Features
 
-- **Natural Language Food Input**: Describe your food in plain Chinese (e.g., "一碗米饭") and AI will parse the nutrition info
-- **AI-Powered Nutrition Parsing**: Uses MiniMax API to accurately estimate calories and macros
+- **Natural Language Food Input**: Describe your food in plain Chinese (e.g., "一碗米饭，两个鸡蛋") and AI will parse the nutrition info
+- **Image Food Recognition**: Take a photo of your meal and AI identifies all foods with nutrition data
+- **AI-Powered Nutrition Parsing**: Uses MiniMax API (text) and Qwen VL Plus (image) for accurate calorie and macro estimation
+- **Food Preferences**: Save your common foods for quick one-tap logging
 - **HealthKit Integration**: Syncs with Apple Watch to track calories burned
 - **Calorie Balance Tracking**: See your daily intake vs burn at a glance
+- **AI Advisor**: Chat with AI about your diet and weight loss progress
 - **SwiftData Persistence**: All food entries stored locally on device
 
 ## Requirements
@@ -21,7 +24,8 @@
 - iOS 17.0+
 - Xcode 15.0+
 - Apple Watch (optional, for activity tracking)
-- MiniMax API key
+- MiniMax API key (for text food parsing)
+- Qwen API key (for image food recognition)
 
 ## Setup
 
@@ -32,16 +36,44 @@ git clone <repository-url>
 cd CalorieCop
 ```
 
-### 2. Configure API Key
+### 2. Obtain API Keys
 
-The app uses the MiniMax API for food parsing. Set up your API key:
+#### MiniMax API Key (Text Parsing)
+1. Go to [MiniMax Platform](https://platform.minimaxi.com/)
+2. Sign up and create an account
+3. Navigate to API Keys section
+4. Create a new API key
 
-1. Open the project in Xcode
-2. Edit the scheme (Product → Scheme → Edit Scheme)
-3. Select "Run" → "Arguments" → "Environment Variables"
-4. Add a new variable:
-   - Name: `MINIMAX_API_KEY`
-   - Value: Your MiniMax API key
+#### Qwen API Key (Image Recognition)
+1. Go to [Alibaba Cloud DashScope](https://dashscope.console.aliyun.com/)
+2. Sign up for an Alibaba Cloud account (international version for non-China users)
+3. Enable the DashScope service
+4. Navigate to **API Keys** in the console
+5. Create a new API key
+6. Note: Use the international endpoint (`dashscope-intl.aliyuncs.com`) for users outside China
+
+### 3. Configure API Keys
+
+The app uses MiniMax API for text parsing and Qwen API for image recognition.
+
+**Option A: Using Secrets.swift (Recommended)**
+
+1. Copy `Secrets.swift.template` to `Secrets.swift`
+2. Add your API keys:
+```swift
+enum Secrets {
+    static let miniMaxAPIKey = "your_minimax_api_key"
+    static let qwenAPIKey = "your_qwen_api_key"
+}
+```
+
+**Option B: Using Environment Variables**
+
+1. Edit the scheme (Product → Scheme → Edit Scheme)
+2. Select "Run" → "Arguments" → "Environment Variables"
+3. Add:
+   - `MINIMAX_API_KEY`: Your MiniMax API key
+   - `QWEN_API_KEY`: Your Qwen API key
 
 ### 3. Enable HealthKit
 
@@ -96,13 +128,25 @@ CalorieCop/
 
 ## API Reference
 
-### MiniMax API
+### MiniMax API (Text Parsing)
 
-The app uses MiniMax's ChatCompletion API:
+- Provider: MiniMax
 - Endpoint: `https://api.minimaxi.chat/v1/text/chatcompletion_v2`
-- Model: `MiniMax-M2.5` (multimodal, supports text & image)
-- AI Advisor: `MiniMax-M2.5-highspeed` (faster responses)
-- Response format: JSON object
+- Model: `MiniMax-M2.5-highspeed` (fast text parsing, ~3s response)
+- Used for: Text food input, AI advisor chat
+- Response format: JSON array
+- Get API key: [MiniMax Platform](https://platform.minimaxi.com/) → API Keys
+
+### Qwen VL Plus (Image Recognition)
+
+- Provider: Alibaba Cloud DashScope
+- Endpoint (International): `https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions`
+- Endpoint (China): `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
+- Model: `qwen-vl-plus`
+- Used for: Camera/photo food recognition
+- Supports: Multiple foods in single image
+- Response format: OpenAI-compatible JSON
+- Get API key: [DashScope Console](https://dashscope.console.aliyun.com/) → API Keys
 
 ## Privacy
 

@@ -49,6 +49,7 @@ Temporary Items
 .apdisk
 
 # API Keys - IMPORTANT: Never commit these
+.mcp.json
 Config.xcconfig
 !Config.xcconfig.template
 Secrets.swift

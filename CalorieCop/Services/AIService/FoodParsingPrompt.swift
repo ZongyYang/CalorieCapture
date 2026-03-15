@@ -16,8 +16,21 @@ enum FoodParsingPrompt {
    - "上周X" = 计算距今天数
    - "X天前" = days_ago: X
 
-【重要】必须返回严格的JSON格式，不要返回YAML或其他格式。示例：
-{"food_name": "煮玉米", "grams": 200, "calories": 196, "protein": 4.2, "carbohydrates": 41.2, "fat": 2.4, "confidence": "high", "notes": "一根中等大小", "days_ago": 0}
+【重要 - 多食物支持】
+用户可能同时输入多种食物（用逗号、顿号、空格或换行分隔）。
+- 如果输入包含多种食物，返回 JSON 数组
+- 如果只有一种食物，也返回 JSON 数组（只有一个元素）
+
+【必须返回严格的JSON数组格式】
+单个食物示例：
+[{"food_name": "煮玉米", "grams": 200, "calories": 196, "protein": 4.2, "carbohydrates": 41.2, "fat": 2.4, "confidence": "high", "notes": "一根中等大小", "days_ago": 0}]
+
+多个食物示例：
+[
+  {"food_name": "咖啡牛奶", "grams": 300, "calories": 120, "protein": 6.0, "carbohydrates": 12.0, "fat": 5.0, "confidence": "high", "notes": "", "days_ago": 0},
+  {"food_name": "鸡蛋", "grams": 50, "calories": 72, "protein": 6.3, "carbohydrates": 0.6, "fat": 5.0, "confidence": "high", "notes": "一个中等大小", "days_ago": 0},
+  {"food_name": "黄瓜", "grams": 100, "calories": 16, "protein": 0.7, "carbohydrates": 2.9, "fat": 0.2, "confidence": "high", "notes": "", "days_ago": 0}
+]
 
 字段说明：
 - food_name: 食物名称（中文字符串）
@@ -36,14 +49,17 @@ enum FoodParsingPrompt {
         var prompt = basePrompt
 
         if !preferences.isEmpty {
-            prompt += "\n\n【用户的食物习惯】\n"
-            prompt += "以下是用户的个人食物偏好设定，当用户提到这些关键词时，如果没有特别说明，请按照用户的习惯来解析：\n"
+            prompt += "\n\n【用户的食物习惯 - 重要！必须严格遵循】\n"
+            prompt += "以下是用户的个人食物偏好设定。当用户提到这些关键词时，**必须**使用以下精确数值，不要估算：\n"
 
             for pref in preferences {
-                prompt += "- \"\(pref.keyword)\" → \(pref.defaultDescription)\n"
+                prompt += "- \"\(pref.keyword)\" → \(pref.promptDescription)\n"
             }
 
-            prompt += "\n注意：如果用户明确指定了不同的份量或描述，以用户当前输入为准。"
+            prompt += "\n**关键规则**：\n"
+            prompt += "1. 如果用户输入匹配上述关键词，必须使用预设的精确数值\n"
+            prompt += "2. 只有当用户明确指定了不同的份量时，才使用用户指定的数值\n"
+            prompt += "3. 这些数值是用户反复确认过的，不要自行调整"
         }
 
         return prompt
