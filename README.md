@@ -36,7 +36,23 @@ git clone <repository-url>
 cd CalorieCop
 ```
 
-### 2. Configure API Keys
+### 2. Obtain API Keys
+
+#### MiniMax API Key (Text Parsing)
+1. Go to [MiniMax Platform](https://platform.minimaxi.com/)
+2. Sign up and create an account
+3. Navigate to API Keys section
+4. Create a new API key
+
+#### Qwen API Key (Image Recognition)
+1. Go to [Alibaba Cloud DashScope](https://dashscope.console.aliyun.com/)
+2. Sign up for an Alibaba Cloud account (international version for non-China users)
+3. Enable the DashScope service
+4. Navigate to **API Keys** in the console
+5. Create a new API key
+6. Note: Use the international endpoint (`dashscope-intl.aliyuncs.com`) for users outside China
+
+### 3. Configure API Keys
 
 The app uses MiniMax API for text parsing and Qwen API for image recognition.
 
@@ -114,18 +130,23 @@ CalorieCop/
 
 ### MiniMax API (Text Parsing)
 
+- Provider: MiniMax
 - Endpoint: `https://api.minimaxi.chat/v1/text/chatcompletion_v2`
 - Model: `MiniMax-M2.5-highspeed` (fast text parsing, ~3s response)
 - Used for: Text food input, AI advisor chat
 - Response format: JSON array
+- Get API key: [MiniMax Platform](https://platform.minimaxi.com/) → API Keys
 
 ### Qwen VL Plus (Image Recognition)
 
-- Endpoint: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions`
+- Provider: Alibaba Cloud DashScope
+- Endpoint (International): `https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions`
+- Endpoint (China): `https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions`
 - Model: `qwen-vl-plus`
 - Used for: Camera/photo food recognition
 - Supports: Multiple foods in single image
 - Response format: OpenAI-compatible JSON
+- Get API key: [DashScope Console](https://dashscope.console.aliyun.com/) → API Keys
 
 ## Privacy
 
