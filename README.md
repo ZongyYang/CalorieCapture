@@ -52,7 +52,7 @@ cd CalorieCop
 5. Create a new API key
 6. Note: Use the international endpoint (`dashscope-intl.aliyuncs.com`) for users outside China
 
-### 3. Configure API Keys
+### 3. Configure API Keys in Project
 
 The app uses MiniMax API for text parsing and Qwen API for image recognition.
 
@@ -75,18 +75,54 @@ enum Secrets {
    - `MINIMAX_API_KEY`: Your MiniMax API key
    - `QWEN_API_KEY`: Your Qwen API key
 
-### 3. Enable HealthKit
+### 4. Open Project in Xcode
 
-1. Open the project in Xcode
-2. Select the CalorieCop target
-3. Go to "Signing & Capabilities"
-4. Click "+ Capability" and add "HealthKit"
-5. Check "Clinical Health Records" if needed
+1. Open `CalorieCop.xcodeproj` in Xcode
+2. Wait for Swift Package Manager to resolve dependencies (if any)
 
-### 4. Build and Run
+### 5. Configure Signing
 
-1. Select your target device or simulator
-2. Press Cmd+R to build and run
+1. Select the **CalorieCop** project in the navigator
+2. Select the **CalorieCop** target
+3. Go to **Signing & Capabilities** tab
+4. Check **Automatically manage signing**
+5. Select your **Team**:
+   - For personal use: Select your Apple ID (Personal Team)
+   - For distribution: Select your Apple Developer account
+6. Xcode will automatically create a provisioning profile
+
+> **Note**: If you don't have a team, click "Add Account..." and sign in with your Apple ID.
+
+### 6. Enable HealthKit
+
+1. In **Signing & Capabilities**, click **+ Capability**
+2. Search for and add **HealthKit**
+3. The app requires HealthKit to read:
+   - Active Energy Burned (from Apple Watch)
+   - Basal Energy Burned
+
+> **Note**: HealthKit features require a physical device. Simulator will use estimated values.
+
+### 7. Build and Run
+
+**For Simulator:**
+1. Select a simulator from the device dropdown (e.g., iPhone 15 Pro)
+2. Press `Cmd + R` to build and run
+
+**For Physical Device:**
+1. Connect your iPhone via USB or select it over Wi-Fi
+2. Trust your computer on the device if prompted
+3. Press `Cmd + R` to build and run
+4. On first run, go to **Settings → General → VPN & Device Management** on your iPhone to trust the developer certificate
+
+### Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| "Signing requires a development team" | Select a team in Signing & Capabilities |
+| "Unable to install app" | Trust the developer certificate on your device |
+| HealthKit data not showing | Use a physical device with Apple Watch paired |
+| API calls failing | Verify API keys are correctly set in Secrets.swift |
 
 ## Project Structure
 
