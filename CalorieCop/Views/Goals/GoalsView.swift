@@ -21,28 +21,36 @@ struct GoalsView: View {
         weightUnit.format(kgValue)
     }
 
+    // Combine HealthKit and manual weight data
     private var combinedWeightHistory: [WeightRecord] {
         var allRecords: [WeightRecord] = []
+
+        // Add HealthKit records
         allRecords.append(contentsOf: healthKitService.dailyWeights)
 
+        // Add manual records
         for entry in manualWeightEntries {
             allRecords.append(WeightRecord(date: entry.date, weight: entry.weight))
         }
 
+        // Sort by date and remove duplicates (prefer HealthKit for same day)
         let grouped = Dictionary(grouping: allRecords) { record in
             Calendar.current.startOfDay(for: record.date)
         }
 
-        return grouped.map { (_, records) in
+        return grouped.map { (date, records) in
+            // Just return the first record for each day
             records.first!
         }.sorted { $0.date < $1.date }
     }
 
     private var currentWeight: Double? {
+        // Prefer most recent weight from any source
         let latestManual = manualWeightEntries.first?.weight
         let latestHealthKit = healthKitService.currentWeight
 
         if let manual = latestManual, let healthKit = latestHealthKit {
+            // Return whichever is more recent
             if let manualDate = manualWeightEntries.first?.date {
                 if let hkDate = healthKitService.weightHistory.first?.date {
                     return manualDate > hkDate ? manual : healthKit
@@ -54,95 +62,70 @@ struct GoalsView: View {
         return latestManual ?? latestHealthKit
     }
 
-    private var startWeight: Double? {
-        combinedWeightHistory.first?.weight
-    }
-
-    private var weightLost: Double {
-        guard let start = startWeight, let current = currentWeight else { return 0 }
-        return start - current
-    }
-
-    private var progressPercent: Double {
-        guard let goal = currentGoal,
-              let start = startWeight,
-              let current = currentWeight else { return 0 }
-
-        let totalToLose = start - goal.targetWeight
-        guard totalToLose > 0 else { return 100 }
-
-        let lost = start - current
-        return min(max(lost / totalToLose * 100, 0), 100)
-    }
-
-    private var remainingWeight: Double {
-        guard let goal = currentGoal, let current = currentWeight else { return 0 }
-        return max(current - goal.targetWeight, 0)
-    }
-
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    // Weight trend chart
-                    weightTrendSection
+                    // Weight Chart
+                    WeightChartView(
+                        weightHistory: combinedWeightHistory,
+                        targetWeight: currentGoal?.targetWeight,
+                        weightUnit: weightUnit
+                    )
 
-                    // Current goal section
+                    // Goal Progress
                     if let goal = currentGoal {
-                        currentGoalSection(goal)
+                        goalProgressCard(goal)
                     } else {
                         noGoalCard
-                    }
-
-                    // Mascot encouragement
-                    if currentGoal != nil {
-                        mascotEncouragementSection
-                    }
-
-                    // Update goal button
-                    Button {
-                        showingGoalSettings = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "pencil")
-                            Text("更新目标")
-                        }
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
                 .padding()
             }
             .background(Color(.systemGroupedBackground))
-            .navigationTitle("目标管理")
+            .navigationTitle("目标")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
                         showingWeightEntry = true
                     } label: {
                         Image(systemName: "plus.circle")
+                        Text("记录体重")
                     }
+                    .font(.caption)
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    Menu {
-                        ForEach(WeightUnit.allCases, id: \.self) { unit in
-                            Button {
-                                setWeightUnit(unit)
-                            } label: {
-                                HStack {
-                                    Text(unit.displayName)
-                                    if unit == weightUnit {
-                                        Image(systemName: "checkmark")
+                    HStack(spacing: 12) {
+                        // Weight unit toggle
+                        Menu {
+                            ForEach(WeightUnit.allCases, id: \.self) { unit in
+                                Button {
+                                    setWeightUnit(unit)
+                                } label: {
+                                    HStack {
+                                        Text(unit.displayName)
+                                        if unit == weightUnit {
+                                            Image(systemName: "checkmark")
+                                        }
                                     }
                                 }
                             }
+                        } label: {
+                            Text(weightUnit.shortName)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.blue.opacity(0.15))
+                                .clipShape(Capsule())
                         }
-                    } label: {
-                        Image(systemName: "ellipsis")
+
+                        Button {
+                            showingGoalSettings = true
+                        } label: {
+                            Image(systemName: "gearshape")
+                        }
                     }
                 }
             }
@@ -161,131 +144,12 @@ struct GoalsView: View {
         }
     }
 
-    private var weightTrendSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Text("体重趋势")
-                    .font(.headline)
-
-                Text("过去30天变化")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                Spacer()
-
-                if weightLost != 0 {
-                    HStack(spacing: 4) {
-                        Text(weightLost > 0 ? "-\(formatWeight(weightLost))" : "+\(formatWeight(abs(weightLost)))")
-                            .font(.headline)
-                            .foregroundStyle(weightLost > 0 ? .green : .red)
-
-                        Text(weightLost > 0 ? "坚持就是胜利" : "继续努力")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-
-            // Weight chart
-            WeightChartView(
-                weightHistory: combinedWeightHistory,
-                targetWeight: currentGoal?.targetWeight,
-                weightUnit: weightUnit
-            )
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func currentGoalSection(_ goal: UserGoal) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("当前目标")
-                .font(.headline)
-
-            // Three weight columns
-            HStack {
-                WeightStatColumn(
-                    label: "起始体重",
-                    value: formatWeight(startWeight ?? goal.targetWeight + 5),
-                    color: .secondary
-                )
-
-                Spacer()
-
-                WeightStatColumn(
-                    label: "当前体重",
-                    value: formatWeight(currentWeight ?? 0),
-                    color: .primary
-                )
-
-                Spacer()
-
-                WeightStatColumn(
-                    label: "目标体重",
-                    value: formatWeight(goal.targetWeight),
-                    color: .blue
-                )
-            }
-
-            // Progress bar
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("完成进度")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Spacer()
-
-                    Text(String(format: "%.1f%%", progressPercent))
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.green)
-                }
-
-                GeometryReader { geometry in
-                    ZStack(alignment: .leading) {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.gray.opacity(0.2))
-                            .frame(height: 12)
-
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.green)
-                            .frame(width: geometry.size.width * progressPercent / 100, height: 12)
-                    }
-                }
-                .frame(height: 12)
-            }
-
-            // Remaining text
-            Text("加油！距离目标还差\(formatWeight(remainingWeight))")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-        }
-        .padding()
-        .background(Color(.systemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var mascotEncouragementSection: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Spacer()
-
-            VStack(alignment: .trailing, spacing: 8) {
-                Text(generateEncouragement())
-                    .font(.subheadline)
-                    .padding()
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .shadow(color: .black.opacity(0.05), radius: 4)
-            }
-            .frame(maxWidth: 250)
-
-            Image("mascot_avatar")
-                .resizable()
-                .frame(width: 50, height: 50)
-                .foregroundStyle(.blue)
+    private func setWeightUnit(_ unit: WeightUnit) {
+        if let existing = settings.first {
+            existing.preferredWeightUnit = unit
+        } else {
+            let newSettings = UserSettings(weightUnit: unit)
+            modelContext.insert(newSettings)
         }
     }
 
@@ -312,56 +176,83 @@ struct GoalsView: View {
         .padding()
         .background(Color(.systemBackground))
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 
-    private func setWeightUnit(_ unit: WeightUnit) {
-        if let existing = settings.first {
-            existing.preferredWeightUnit = unit
-        } else {
-            let newSettings = UserSettings(weightUnit: unit)
-            modelContext.insert(newSettings)
+    private func goalProgressCard(_ goal: UserGoal) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("目标进度")
+                    .font(.headline)
+                Spacer()
+                if let targetDate = goal.targetDate {
+                    let daysLeft = Calendar.current.dateComponents([.day], from: Date(), to: targetDate).day ?? 0
+                    Text("还剩 \(daysLeft) 天")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let weight = currentWeight {
+                let startWeight = combinedWeightHistory.first?.weight ?? weight
+                let totalToLose = startWeight - goal.targetWeight
+                let lost = startWeight - weight
+                let progress = totalToLose > 0 ? min(lost / totalToLose, 1.0) : 1.0
+
+                VStack(spacing: 8) {
+                    ProgressView(value: max(progress, 0))
+                        .tint(.green)
+
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text("当前")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(formatWeight(weight))
+                                .font(.title2)
+                                .fontWeight(.bold)
+                        }
+
+                        Spacer()
+
+                        VStack {
+                            Text("已减")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(formatWeight(max(lost, 0)))
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundStyle(.green)
+                        }
+
+                        Spacer()
+
+                        VStack(alignment: .trailing) {
+                            Text("目标")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(formatWeight(goal.targetWeight))
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                }
+            } else {
+                VStack(spacing: 8) {
+                    Text("暂无体重数据")
+                        .foregroundStyle(.secondary)
+                    Button("手动记录体重") {
+                        showingWeightEntry = true
+                    }
+                    .buttonStyle(.bordered)
+                }
+            }
         }
-    }
-
-    private var daysTracking: Int {
-        guard let firstRecord = combinedWeightHistory.first else { return 0 }
-        let days = Calendar.current.dateComponents([.day], from: firstRecord.date, to: Date()).day ?? 0
-        return max(days, 0)
-    }
-
-    private func generateEncouragement() -> String {
-        if progressPercent > 50 {
-            return "太棒了！你已经完成了一半以上的目标！继续保持，胜利就在眼前！"
-        } else if daysTracking > 7 {
-            return "你已经坚持了\(daysTracking)天！每一步都在靠近目标，继续保持！"
-        } else if daysTracking > 0 {
-            return "坚持记录第\(daysTracking + 1)天！健康的生活方式需要时间，相信自己！"
-        } else if weightLost > 0 {
-            return "已经减了\(formatWeight(weightLost))，继续加油！每一小步都是进步！"
-        } else {
-            return "刚刚开始的旅程最需要坚持，每一小步都是进步！记得今天多喝水哦~"
-        }
-    }
-}
-
-// MARK: - Weight Stat Column
-
-struct WeightStatColumn: View {
-    let label: String
-    let value: String
-    let color: Color
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            Text(value)
-                .font(.title2)
-                .fontWeight(.bold)
-                .foregroundStyle(color)
-        }
+        .padding()
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 }
 
