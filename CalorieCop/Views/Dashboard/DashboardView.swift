@@ -257,19 +257,13 @@ struct DashboardView: View {
             }
 
             if todayEntries.isEmpty {
-                VStack(spacing: 12) {
-                    Image("mascot_avatar")
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 60, height: 60)
-                    Text("还没有记录哦")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 40)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 16))
+                Text("还没有记录哦")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 FoodListView()
                     .frame(minHeight: 200)

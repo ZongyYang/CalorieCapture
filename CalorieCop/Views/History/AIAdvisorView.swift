@@ -16,72 +16,80 @@ struct AIAdvisorView: View {
     @State private var hasUsedInitialPrompt = false
     @State private var isLoading = false
     @State private var showingDeleteConfirmation = false
+    @State private var sessionStartTime = Date()  // Track current session for API calls
 
-    private var summary: String {
+    /// Analyze question to determine what data to include
+    private func detectDataNeeds(from question: String) -> (needsWeight: Bool, needsFood: Bool, foodDays: Int) {
+        let q = question.lowercased()
+
+        // Weight-related keywords
+        let weightKeywords = ["体重", "重量", "瘦", "胖", "减重", "增重", "kg", "斤", "公斤"]
+        let needsWeight = weightKeywords.contains { q.contains($0) }
+
+        // Food/calorie-related keywords
+        let foodKeywords = ["吃", "热量", "卡路里", "营养", "蛋白", "碳水", "脂肪", "饮食", "摄入", "kcal"]
+        let needsFood = foodKeywords.contains { q.contains($0) }
+
+        // Time range detection
+        var foodDays = 3 // default
+        if q.contains("一周") || q.contains("这周") || q.contains("7天") || q.contains("七天") {
+            foodDays = 7
+        } else if q.contains("两周") || q.contains("14天") || q.contains("半个月") {
+            foodDays = 14
+        } else if q.contains("今天") || q.contains("今日") {
+            foodDays = 1
+        } else if q.contains("昨天") {
+            foodDays = 2
+        } else if q.contains("最近") || q.contains("这几天") {
+            foodDays = 5
+        }
+
+        // If neither detected, include basic data
+        if !needsWeight && !needsFood {
+            return (true, true, 3)
+        }
+
+        return (needsWeight, needsFood, foodDays)
+    }
+
+    /// Generate summary based on question context
+    private func summaryForQuestion(_ question: String) -> String {
+        let needs = detectDataNeeds(from: question)
         var summaryLines: [String] = []
 
-        // Goal information
-        if let goal = userGoal {
-            summaryLines.append("【用户目标设定】")
-            summaryLines.append("- 目标体重: \(goal.targetWeight)kg")
-            summaryLines.append("- 身高: \(goal.height)cm, 年龄: \(goal.age)岁, 性别: \(goal.gender == "male" ? "男" : "女")")
-            summaryLines.append("- 活动水平: \(activityLevelText(goal.activityLevel))")
-
-            if let targetDate = goal.targetDate {
-                let formatter = DateFormatter()
-                formatter.dateFormat = "yyyy年M月d日"
-                summaryLines.append("- 目标日期: \(formatter.string(from: targetDate))")
-
-                let daysLeft = Calendar.current.dateComponents([.day], from: Date(), to: targetDate).day ?? 0
-                summaryLines.append("- 距目标还有: \(daysLeft)天")
-            }
-
-            if let weight = currentWeight {
-                summaryLines.append("- 当前体重: \(String(format: "%.1f", weight))kg")
-                summaryLines.append("- 需要减重: \(String(format: "%.1f", weight - goal.targetWeight))kg")
-
-                let bmr = goal.calculateBMR(currentWeight: weight)
-                let tdee = goal.calculateTDEE(currentWeight: weight)
-                let recommended = goal.recommendedDailyCalories(currentWeight: weight)
-
-                summaryLines.append("- 基础代谢(BMR): \(Int(bmr))kcal")
-                summaryLines.append("- 每日总消耗(TDEE): \(Int(tdee))kcal")
-                summaryLines.append("- 建议每日摄入: \(Int(recommended))kcal")
-            }
-            summaryLines.append("")
+        // Always include basic goal info (compact)
+        if let goal = userGoal, let weight = currentWeight {
+            summaryLines.append("【目标】\(String(format: "%.1f", weight))kg→\(goal.targetWeight)kg, TDEE:\(Int(goal.calculateTDEE(currentWeight: weight)))kcal, 建议摄入:\(Int(goal.recommendedDailyCalories(currentWeight: weight)))kcal")
         }
 
-        // Weight history
-        if !weightHistory.isEmpty {
-            summaryLines.append("【体重变化记录】")
-            for entry in weightHistory.prefix(10) {
+        // Weight history (if needed)
+        if needs.needsWeight && !weightHistory.isEmpty {
+            summaryLines.append("【体重】")
+            for entry in weightHistory.prefix(7) {
                 let formatter = DateFormatter()
-                formatter.dateFormat = "M月d日"
-                summaryLines.append("- \(formatter.string(from: entry.date)): \(String(format: "%.1f", entry.weight))kg")
+                formatter.dateFormat = "M/d"
+                summaryLines.append("\(formatter.string(from: entry.date)):\(String(format: "%.1f", entry.weight))kg")
             }
-            summaryLines.append("")
         }
 
-        // Food entries
-        let grouped = Dictionary(grouping: foodEntries) { entry in
-            Calendar.current.startOfDay(for: entry.createdAt)
-        }.sorted { $0.key > $1.key }
+        // Food entries (if needed)
+        if needs.needsFood {
+            let grouped = Dictionary(grouping: foodEntries) { entry in
+                Calendar.current.startOfDay(for: entry.createdAt)
+            }.sorted { $0.key > $1.key }
 
-        summaryLines.append("【最近饮食记录】")
-
-        if grouped.isEmpty {
-            summaryLines.append("暂无记录")
-        } else {
-            for day in grouped.prefix(7) {
-                let totalCal = day.value.reduce(0) { $0 + $1.calories }
-                let totalProtein = day.value.reduce(0) { $0 + $1.protein }
-                let totalCarbs = day.value.reduce(0) { $0 + $1.carbohydrates }
-                let totalFat = day.value.reduce(0) { $0 + $1.fat }
-
-                let dateStr = formatDate(day.key)
-                let foods = day.value.map { $0.foodName }.joined(separator: "、")
-
-                summaryLines.append("\(dateStr): \(totalCal.formattedCalories)kcal (蛋白\(totalProtein.formattedGrams)g, 碳水\(totalCarbs.formattedGrams)g, 脂肪\(totalFat.formattedGrams)g) - 食物: \(foods)")
+            summaryLines.append("【饮食】")
+            if grouped.isEmpty {
+                summaryLines.append("暂无记录")
+            } else {
+                for day in grouped.prefix(needs.foodDays) {
+                    let totalCal = day.value.reduce(0) { $0 + $1.calories }
+                    let totalProtein = day.value.reduce(0) { $0 + $1.protein }
+                    let totalCarbs = day.value.reduce(0) { $0 + $1.carbohydrates }
+                    let totalFat = day.value.reduce(0) { $0 + $1.fat }
+                    let dateStr = formatDate(day.key)
+                    summaryLines.append("\(dateStr):\(Int(totalCal))kcal P\(Int(totalProtein)) C\(Int(totalCarbs)) F\(Int(totalFat))")
+                }
             }
         }
 
@@ -274,43 +282,24 @@ struct AIAdvisorView: View {
             throw AIServiceError.apiKeyNotConfigured
         }
 
+        let dynamicSummary = summaryForQuestion(question)
+
         let systemPrompt = """
-你是一个专业的营养顾问和健身教练AI。用户会向你咨询关于减重、饮食和健康目标的问题。
+营养顾问AI。\(currentTimeContext)
 
-【当前时间信息】
-\(currentTimeContext)
+\(dynamicSummary)
 
-【重要分析原则】
-1. 当用户问"最近"、"这周"、"过去几天"等问题时，重点分析**已完成的过去几天**的数据，不要把重点放在今天
-2. 今天的数据仅供参考（因为今天还没结束），分析重点应该是昨天及之前的完整数据
-3. 如果是早上或上午，今天摄入少是正常的，不需要特别提醒
-4. 回顾过去几天时，计算平均每日摄入、平均热量缺口、营养素比例等具体数据
-
-以下是用户的完整数据：
-
-\(summary)
-
-请根据以上数据回答用户的问题。提供具体、实用、有数据支持的建议。
-- 如果用户问多久能达到目标，请根据当前热量缺口和目标体重差距计算（每减1kg约需消耗7700kcal）
-- 回答要简洁友好，使用中文
-- 如果数据不足，请指出需要哪些信息
-- 当问及"最近"或"一周"时，给出过去几天的具体数据总结，而不是泛泛的建议
-
-格式要求（重要）：
-- 不要使用表格
-- 不要使用标题（#、##、###）
-- 可以使用 **粗体** 强调重点
-- 使用 • 或数字列表来组织内容
-- 保持简洁，每次回复不超过200字
+规则：简洁回答，用数据支持，中文，不超过150字。用•列表，可用**粗体**。
 """
 
         var messages: [[String: String]] = [
             ["role": "system", "content": systemPrompt]
         ]
 
-        // Add conversation history from persisted messages (excluding the current question which was just added)
-        for msg in chatMessages {
-            // Skip if this is the current question we just inserted (it might or might not be in the query results yet)
+        // Only include messages from current session (not persisted history)
+        let currentSessionMessages = chatMessages.filter { $0.createdAt >= sessionStartTime }
+        for msg in currentSessionMessages {
+            // Skip if this is the current question we just inserted
             if msg.role == "user" && msg.content == question {
                 continue
             }
