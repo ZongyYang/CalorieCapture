@@ -2,7 +2,9 @@ import Foundation
 import UIKit
 
 final class MiniMaxService: AIServiceProtocol {
-    private let endpoint = URL(string: "https://api.minimax.io/v1/text/chatcompletion_v2")!
+    // Endpoints are now dynamic based on user's region setting
+    private var endpoint: URL { APIKeyManager.miniMaxEndpoint }
+    private var qwenEndpoint: URL { APIKeyManager.qwenEndpoint }
     // MiniMax-M2.7-highspeed for text parsing
     private let model = "MiniMax-M2.7-highspeed"
     private let logger = DebugLogger.shared
@@ -80,7 +82,7 @@ final class MiniMaxService: AIServiceProtocol {
             ]
         ]
 
-        let qwenEndpoint = URL(string: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions")!
+        // Use dynamic endpoint based on user's region setting
         var request = URLRequest(url: qwenEndpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")

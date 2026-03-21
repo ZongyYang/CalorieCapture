@@ -13,6 +13,7 @@ enum AIServiceError: LocalizedError {
     case invalidResponse
     case networkError(Error)
     case parsingError(String)
+    case chatError(String)
 
     var errorDescription: String? {
         switch self {
@@ -24,6 +25,8 @@ enum AIServiceError: LocalizedError {
             return "Network error: \(error.localizedDescription)"
         case .parsingError(let message):
             return "Failed to parse food input: \(message)"
+        case .chatError(let message):
+            return message
         }
     }
 }

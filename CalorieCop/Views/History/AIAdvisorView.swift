@@ -19,6 +19,7 @@ struct AIAdvisorView: View {
     @State private var sessionStartTime = Date()  // Track current session for API calls
     @State private var streamingMessageId: UUID?  // Track message being streamed
     @State private var streamingContent = ""  // Accumulate streaming content
+    @State private var showingAPIKeySetup = false  // API key setup sheet
 
     /// Analyze question to determine what data to include
     private func detectDataNeeds(from question: String) -> (needsWeight: Bool, needsFood: Bool, foodDays: Int) {
@@ -124,12 +125,18 @@ struct AIAdvisorView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Conversation
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            // Welcome message
-                            AIMessageBubble(content: "嗨～我是你的营养小助手 🥗\n\n我已经看到你的目标和饮食记录啦，随时可以帮你分析！\n\n试着问我：\n• 我最近吃得怎么样？\n• 照这个节奏多久能达标？\n• 有什么建议给我吗？")
+                if !APIKeyManager.isMiniMaxConfigured {
+                    // API Key not configured - show setup prompt
+                    Spacer()
+                    apiKeyPromptSection
+                    Spacer()
+                } else {
+                    // Conversation
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(alignment: .leading, spacing: 12) {
+                                // Welcome message
+                                AIMessageBubble(content: "嗨～我是你的营养小助手 🥗\n\n我已经看到你的目标和饮食记录啦，随时可以帮你分析！\n\n试着问我：\n• 我最近吃得怎么样？\n• 照这个节奏多久能达标？\n• 有什么建议给我吗？")
 
                             ForEach(chatMessages) { message in
                                 MessageRow(
@@ -187,6 +194,7 @@ struct AIAdvisorView: View {
                 }
                 .padding()
                 .background(Color(.systemBackground))
+                }  // End of else block for API configured
             }
             .navigationTitle("AI顾问")
             .navigationBarTitleDisplayMode(.inline)
@@ -233,7 +241,44 @@ struct AIAdvisorView: View {
                 // Save any streaming content before disappearing
                 saveStreamingContent()
             }
+            .sheet(isPresented: $showingAPIKeySetup) {
+                APIKeySetupView()
+            }
         }
+    }
+
+    private var apiKeyPromptSection: some View {
+        VStack(spacing: 20) {
+            Image(systemName: "key.fill")
+                .font(.system(size: 50))
+                .foregroundStyle(.orange)
+
+            Text("需要设置 API 密钥")
+                .font(.title2)
+                .fontWeight(.bold)
+
+            Text("AI 顾问需要 MiniMax API 密钥才能使用。请先设置 API 密钥。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            Button {
+                showingAPIKeySetup = true
+            } label: {
+                HStack {
+                    Image(systemName: "gear")
+                    Text("设置 API 密钥")
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.blue)
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .padding(.horizontal)
+        }
+        .padding()
     }
 
     private func saveStreamingContent() {
@@ -378,6 +423,46 @@ struct AIAdvisorView: View {
         return "当前时间：\(timeString)（\(period)）"
     }
 
+    /// Compress older messages into a brief summary to reduce context length
+    private func compressMessages(_ messages: [ChatMessage]) -> String {
+        guard !messages.isEmpty else { return "" }
+
+        var summaryParts: [String] = []
+
+        // Group by topic/question
+        var currentQuestion = ""
+        var currentAnswer = ""
+
+        for msg in messages {
+            if msg.role == "user" {
+                // Save previous Q&A if exists
+                if !currentQuestion.isEmpty && !currentAnswer.isEmpty {
+                    let shortQ = currentQuestion.prefix(30)
+                    let shortA = currentAnswer.prefix(50)
+                    summaryParts.append("问:\(shortQ)… 答:\(shortA)…")
+                }
+                currentQuestion = msg.content
+                currentAnswer = ""
+            } else {
+                currentAnswer = msg.content
+            }
+        }
+
+        // Don't forget last pair
+        if !currentQuestion.isEmpty && !currentAnswer.isEmpty {
+            let shortQ = currentQuestion.prefix(30)
+            let shortA = currentAnswer.prefix(50)
+            summaryParts.append("问:\(shortQ)… 答:\(shortA)…")
+        }
+
+        // Limit total summary length
+        let summary = summaryParts.joined(separator: " | ")
+        if summary.count > 300 {
+            return String(summary.prefix(300)) + "…"
+        }
+        return summary
+    }
+
     private func askAI(question: String) async throws -> String {
         guard let apiKey = APIKeyManager.miniMaxAPIKey else {
             throw AIServiceError.apiKeyNotConfigured
@@ -385,10 +470,30 @@ struct AIAdvisorView: View {
 
         let dynamicSummary = summaryForQuestion(question)
 
-        let systemPrompt = """
+        // Include chat history with compression for long conversations
+        let sortedMessages = chatMessages
+            .filter { !$0.content.isEmpty }
+            .sorted { $0.createdAt < $1.createdAt }
+
+        let maxRecentMessages = 6
+        var historySummary = ""
+
+        if sortedMessages.count > maxRecentMessages {
+            let olderMessages = sortedMessages.prefix(sortedMessages.count - maxRecentMessages)
+            historySummary = compressMessages(Array(olderMessages))
+        }
+
+        // Build single system prompt
+        var systemPrompt = """
 你是一位亲切友好的营养小助手，像朋友一样和用户聊天。\(currentTimeContext)
 
 \(dynamicSummary)
+"""
+        if !historySummary.isEmpty {
+            systemPrompt += "\n\n之前对话摘要：\(historySummary)"
+        }
+
+        systemPrompt += """
 
 风格：温暖亲切，多用emoji表情😊🎉💪，像好朋友聊天。用"你"称呼用户，多鼓励夸奖。
 格式：用•列表，可用**粗体**强调。禁止表格和代码块。
@@ -399,17 +504,16 @@ struct AIAdvisorView: View {
             ["role": "system", "content": systemPrompt]
         ]
 
-        // Only include messages from current session (not persisted history)
-        let currentSessionMessages = chatMessages.filter { $0.createdAt >= sessionStartTime }
-        for msg in currentSessionMessages {
-            // Skip if this is the current question we just inserted
-            if msg.role == "user" && msg.content == question {
-                continue
-            }
+        // Add recent messages
+        let recentMessages = sortedMessages.count > maxRecentMessages
+            ? Array(sortedMessages.suffix(maxRecentMessages))
+            : sortedMessages
+
+        for msg in recentMessages {
+            if msg.role == "user" && msg.content == question { continue }
             messages.append(["role": msg.role, "content": msg.content])
         }
 
-        // Always add the current question explicitly
         messages.append(["role": "user", "content": question])
 
         // Use highspeed model for faster response
@@ -418,7 +522,7 @@ struct AIAdvisorView: View {
             "messages": messages
         ]
 
-        var request = URLRequest(url: URL(string: "https://api.minimax.io/v1/text/chatcompletion_v2")!)
+        var request = URLRequest(url: APIKeyManager.miniMaxEndpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -482,10 +586,31 @@ struct AIAdvisorView: View {
 
         let dynamicSummary = summaryForQuestion(question)
 
-        let systemPrompt = """
+        // Include chat history with compression for long conversations
+        let sortedMessages = chatMessages
+            .filter { !$0.content.isEmpty }
+            .sorted { $0.createdAt < $1.createdAt }
+
+        let maxRecentMessages = 6  // Keep last 6 messages (3 exchanges) in full
+        var historySummary = ""
+
+        if sortedMessages.count > maxRecentMessages {
+            // Compress older messages into a summary
+            let olderMessages = sortedMessages.prefix(sortedMessages.count - maxRecentMessages)
+            historySummary = compressMessages(Array(olderMessages))
+        }
+
+        // Build system prompt with optional history summary (single system message)
+        var systemPrompt = """
 你是一位亲切友好的营养小助手，像朋友一样和用户聊天。\(currentTimeContext)
 
 \(dynamicSummary)
+"""
+        if !historySummary.isEmpty {
+            systemPrompt += "\n\n之前对话摘要：\(historySummary)"
+        }
+
+        systemPrompt += """
 
 风格：温暖亲切，多用emoji表情😊🎉💪，像好朋友聊天。用"你"称呼用户，多鼓励夸奖。
 格式：用•列表，可用**粗体**强调。禁止表格和代码块。
@@ -496,13 +621,13 @@ struct AIAdvisorView: View {
             ["role": "system", "content": systemPrompt]
         ]
 
-        // Only include messages from current session (not persisted history)
-        let currentSessionMessages = chatMessages.filter { $0.createdAt >= sessionStartTime }
-        for msg in currentSessionMessages {
-            // Skip empty messages (placeholder) and current question
-            if msg.content.isEmpty || (msg.role == "user" && msg.content == question) {
-                continue
-            }
+        // Add recent messages
+        let recentMessages = sortedMessages.count > maxRecentMessages
+            ? Array(sortedMessages.suffix(maxRecentMessages))
+            : sortedMessages
+
+        for msg in recentMessages {
+            if msg.role == "user" && msg.content == question { continue }
             messages.append(["role": msg.role, "content": msg.content])
         }
 
@@ -514,7 +639,7 @@ struct AIAdvisorView: View {
             "stream": true
         ]
 
-        var request = URLRequest(url: URL(string: "https://api.minimax.io/v1/text/chatcompletion_v2")!)
+        var request = URLRequest(url: APIKeyManager.miniMaxEndpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -522,9 +647,19 @@ struct AIAdvisorView: View {
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
 
-        guard let httpResponse = response as? HTTPURLResponse,
-              (200...299).contains(httpResponse.statusCode) else {
-            throw AIServiceError.parsingError("HTTP错误")
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIServiceError.parsingError("无效响应")
+        }
+
+        // Log for debugging
+        if !(200...299).contains(httpResponse.statusCode) {
+            // Try to read error body
+            var errorBody = ""
+            for try await line in bytes.lines {
+                errorBody += line
+                if errorBody.count > 500 { break }
+            }
+            throw AIServiceError.chatError("请求失败 (\(httpResponse.statusCode)): \(errorBody.prefix(100))")
         }
 
         var accumulatedContent = ""
@@ -555,6 +690,11 @@ struct AIAdvisorView: View {
                 accumulatedContent += content
                 onContent(accumulatedContent)
             }
+        }
+
+        // If no content was received, throw error
+        if accumulatedContent.isEmpty {
+            throw AIServiceError.chatError("AI 返回为空，请重试")
         }
     }
 

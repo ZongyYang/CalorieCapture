@@ -25,7 +25,20 @@ struct FoodInputView: View {
     @State private var showingDeleteConfirmation = false
     @State private var preferenceToDelete: FoodPreference?
 
+    // API Key setup
+    @State private var showingAPIKeySetup = false
+    @State private var apiKeyCheckTrigger = false  // Used to refresh state
+
     private let aiService = MiniMaxService()
+
+    private var isAPIConfigured: Bool {
+        // Text parsing needs MiniMax, image needs both MiniMax and Qwen
+        APIKeyManager.isMiniMaxConfigured
+    }
+
+    private var isImageAPIConfigured: Bool {
+        APIKeyManager.isQwenConfigured
+    }
 
     private var isCameraAvailable: Bool {
         UIImagePickerController.isSourceTypeAvailable(.camera)
@@ -35,39 +48,59 @@ struct FoodInputView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
-                    instructionText
-
-                    // Image input section
-                    imageInputSection
-
-                    // Dynamic divider text based on whether image is selected
-                    if selectedImage != nil {
-                        dividerWithText("补充说明 (可选)")
+                    // API Key setup prompt if not configured
+                    // Use apiKeyCheckTrigger to force SwiftUI to re-evaluate
+                    let _ = apiKeyCheckTrigger
+                    if !isAPIConfigured {
+                        apiKeyPromptSection
                     } else {
-                        dividerWithText("或直接输入文字")
-                    }
+                        instructionText
 
-                    // Text input section
-                    inputField
+                        // Image input section
+                        imageInputSection
 
-                    if let error = errorMessage {
-                        errorView(error)
-                    }
+                        // Dynamic divider text based on whether image is selected
+                        if selectedImage != nil {
+                            dividerWithText("补充说明 (可选)")
+                        } else {
+                            dividerWithText("或直接输入文字")
+                        }
 
-                    parseButton
+                        // Text input section
+                        inputField
 
-                    // Food preferences section
-                    if !foodPreferences.isEmpty {
-                        savedPreferencesSection
+                        if let error = errorMessage {
+                            errorView(error)
+                        }
+
+                        parseButton
+
+                        // Food preferences section
+                        if !foodPreferences.isEmpty {
+                            savedPreferencesSection
+                        }
                     }
                 }
                 .padding()
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
             }
             .scrollDismissesKeyboard(.interactively)
             .onTapGesture {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             }
             .navigationTitle("记录食物")
+            .toolbar {
+                if isAPIConfigured {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            showingAPIKeySetup = true
+                        } label: {
+                            Image(systemName: "gear")
+                        }
+                    }
+                }
+            }
             .sheet(isPresented: $showConfirmation) {
                 if let nutrition = parsedNutrition {
                     FoodConfirmationView(
@@ -113,6 +146,96 @@ struct FoodInputView: View {
                     }
                 }
             }
+            .sheet(isPresented: $showingAPIKeySetup) {
+                APIKeySetupView {
+                    // Trigger refresh when keys are saved
+                    apiKeyCheckTrigger.toggle()
+                }
+            }
+            .onChange(of: showingAPIKeySetup) { _, isShowing in
+                // Refresh when sheet is dismissed
+                if !isShowing {
+                    apiKeyCheckTrigger.toggle()
+                }
+            }
+        }
+    }
+
+    private var apiKeyPromptSection: some View {
+        VStack(spacing: 20) {
+            Spacer()
+                .frame(height: 40)
+
+            Image(systemName: "key.fill")
+                .font(.system(size: 50))
+                .foregroundStyle(.orange)
+
+            Text("需要设置 API 密钥")
+                .font(.title2)
+                .fontWeight(.bold)
+
+            Text("请设置 MiniMax API 密钥以启用文字解析功能。图片识别功能为可选。")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            VStack(alignment: .leading, spacing: 12) {
+                apiStatusRow(
+                    name: "MiniMax API",
+                    purpose: "文字解析（必需）",
+                    isConfigured: APIKeyManager.isMiniMaxConfigured
+                )
+                apiStatusRow(
+                    name: "Qwen API",
+                    purpose: "图片识别（可选）",
+                    isConfigured: APIKeyManager.isQwenConfigured
+                )
+            }
+            .padding()
+            .background(Color(.systemGray6))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+
+            Button {
+                showingAPIKeySetup = true
+            } label: {
+                HStack {
+                    Image(systemName: "gear")
+                    Text("设置 API 密钥")
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.blue)
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+
+            Spacer()
+        }
+    }
+
+    private func apiStatusRow(name: String, purpose: String, isConfigured: Bool) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                Text(purpose)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if isConfigured {
+                Label("已配置", systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            } else {
+                Label("未配置", systemImage: "xmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
@@ -124,6 +247,27 @@ struct FoodInputView: View {
 
     private var imageInputSection: some View {
         VStack(spacing: 12) {
+            // Warning if Qwen API not configured
+            // Use apiKeyCheckTrigger to force refresh
+            let _ = apiKeyCheckTrigger
+            if !isImageAPIConfigured {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("图片识别需要设置 Qwen API")
+                        .font(.caption)
+                    Spacer()
+                    Button("设置") {
+                        showingAPIKeySetup = true
+                    }
+                    .font(.caption)
+                    .fontWeight(.medium)
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
             if let image = selectedImage {
                 Image(uiImage: image)
                     .resizable()
@@ -364,6 +508,19 @@ struct FoodInputView: View {
         // Dismiss keyboard first
         _ = await MainActor.run {
             UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        }
+
+        // Check API keys before parsing
+        if selectedImage != nil && !isImageAPIConfigured {
+            errorMessage = "图片识别需要设置 Qwen API 密钥。请在设置中配置。"
+            showingAPIKeySetup = true
+            return
+        }
+
+        if !APIKeyManager.isMiniMaxConfigured {
+            errorMessage = "请先设置 MiniMax API 密钥"
+            showingAPIKeySetup = true
+            return
         }
 
         isLoading = true
