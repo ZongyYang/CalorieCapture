@@ -13,7 +13,7 @@ To switch versions: `git checkout v0.0.0` or `git checkout v0.0.1`
 
 - **UI**: SwiftUI (iOS 17+)
 - **Storage**: SwiftData
-- **AI Text**: MiniMax API (M2.5-highspeed for fast parsing)
+- **AI Text**: MiniMax API (M2.7-highspeed for fast parsing)
 - **AI Vision**: Qwen VL Plus (image food recognition)
 - **Health**: HealthKit (Apple Watch integration)
 - **Charts**: Swift Charts
@@ -67,9 +67,9 @@ enum Secrets {
 ```
 
 ### MiniMax API
-- **Text parsing**: `MiniMax-M2.5-highspeed` (~3s response, 4x faster than regular M2.5)
-- **AI Advisor**: `MiniMax-M2.5-highspeed` for chat
-- Endpoint: `https://api.minimaxi.chat/v1/text/chatcompletion_v2`
+- **Text parsing**: `MiniMax-M2.7-highspeed` for fast response
+- **AI Advisor**: `MiniMax-M2.7-highspeed` for chat
+- Endpoint: `https://api.minimax.io/v1/text/chatcompletion_v2`
 - Note: MiniMax vision models (M1, VL-01) are NOT available via API
 
 ### Qwen VL Plus (Image Recognition)

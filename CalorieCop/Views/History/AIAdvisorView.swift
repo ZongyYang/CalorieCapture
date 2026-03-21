@@ -9,7 +9,7 @@ struct AIAdvisorView: View {
     let foodEntries: [FoodEntry]
     let userGoal: UserGoal?
     let currentWeight: Double?
-    let weightHistory: [WeightEntry]
+    let weightHistory: [WeightRecord]
     var initialPrompt: String = ""
 
     @State private var userQuestion = ""
@@ -17,6 +17,8 @@ struct AIAdvisorView: View {
     @State private var isLoading = false
     @State private var showingDeleteConfirmation = false
     @State private var sessionStartTime = Date()  // Track current session for API calls
+    @State private var streamingMessageId: UUID?  // Track message being streamed
+    @State private var streamingContent = ""  // Accumulate streaming content
 
     /// Analyze question to determine what data to include
     private func detectDataNeeds(from question: String) -> (needsWeight: Bool, needsFood: Bool, foodDays: Int) {
@@ -59,16 +61,28 @@ struct AIAdvisorView: View {
 
         // Always include basic goal info (compact)
         if let goal = userGoal, let weight = currentWeight {
-            summaryLines.append("【目标】\(String(format: "%.1f", weight))kg→\(goal.targetWeight)kg, TDEE:\(Int(goal.calculateTDEE(currentWeight: weight)))kcal, 建议摄入:\(Int(goal.recommendedDailyCalories(currentWeight: weight)))kcal")
+            var goalInfo = "【目标】当前\(String(format: "%.1f", weight))kg→目标\(String(format: "%.1f", goal.targetWeight))kg"
+            if let targetDate = goal.targetDate {
+                let formatter = DateFormatter()
+                formatter.dateFormat = "yyyy/M/d"
+                let daysLeft = Calendar.current.dateComponents([.day], from: Date(), to: targetDate).day ?? 0
+                goalInfo += ", 目标日期:\(formatter.string(from: targetDate))(还剩\(daysLeft)天)"
+            }
+            goalInfo += ", TDEE:\(Int(goal.calculateTDEE(currentWeight: weight)))kcal, 建议摄入:\(Int(goal.recommendedDailyCalories(currentWeight: weight)))kcal"
+            summaryLines.append(goalInfo)
         }
 
-        // Weight history (if needed)
+        // Weight history (if needed) - past 3 weeks
         if needs.needsWeight && !weightHistory.isEmpty {
-            summaryLines.append("【体重】")
-            for entry in weightHistory.prefix(7) {
+            let threeWeeksAgo = Calendar.current.date(byAdding: .day, value: -21, to: Date()) ?? Date()
+            let recentWeights = weightHistory.filter { $0.date >= threeWeeksAgo }
+            if !recentWeights.isEmpty {
+                summaryLines.append("【体重】")
                 let formatter = DateFormatter()
                 formatter.dateFormat = "M/d"
-                summaryLines.append("\(formatter.string(from: entry.date)):\(String(format: "%.1f", entry.weight))kg")
+                for record in recentWeights {
+                    summaryLines.append("\(formatter.string(from: record.date)):\(String(format: "%.1f", record.weight))kg")
+                }
             }
         }
 
@@ -115,19 +129,18 @@ struct AIAdvisorView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 12) {
                             // Welcome message
-                            AIMessageBubble(content: "你好！我是你的AI营养顾问。我可以看到你的目标设定、体重变化和饮食记录。\n\n你可以问我：\n• 按我的计划多久能达到目标？\n• 我这周吃得健康吗？\n• 我的热量缺口够吗？\n• 有什么改善建议？")
+                            AIMessageBubble(content: "嗨～我是你的营养小助手 🥗\n\n我已经看到你的目标和饮食记录啦，随时可以帮你分析！\n\n试着问我：\n• 我最近吃得怎么样？\n• 照这个节奏多久能达标？\n• 有什么建议给我吗？")
 
                             ForEach(chatMessages) { message in
-                                if message.role == "user" {
-                                    UserMessageBubble(content: message.content)
-                                        .id(message.id)
-                                } else {
-                                    AIMessageBubble(content: message.content)
-                                        .id(message.id)
-                                }
+                                MessageRow(
+                                    message: message,
+                                    streamingMessageId: streamingMessageId,
+                                    streamingContent: streamingContent
+                                )
+                                .id(message.id)
                             }
 
-                            if isLoading {
+                            if isLoading && streamingMessageId == nil {
                                 HStack {
                                     ProgressView()
                                         .padding()
@@ -137,6 +150,13 @@ struct AIAdvisorView: View {
                         }
                         .padding()
                     }
+                    .scrollDismissesKeyboard(.interactively)
+                    .simultaneousGesture(
+                        TapGesture()
+                            .onEnded { _ in
+                                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+                            }
+                    )
                     .onChange(of: chatMessages.count) {
                         withAnimation {
                             if let lastMessage = chatMessages.last {
@@ -195,11 +215,10 @@ struct AIAdvisorView: View {
             } message: {
                 Text("确定要删除所有聊天记录吗？此操作无法撤销。")
             }
-            .onTapGesture {
-                // Dismiss keyboard when tapping outside text field
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-            }
             .onAppear {
+                // Resume interrupted conversation if there's an empty AI message
+                resumeInterruptedConversation()
+
                 // Auto-send initial prompt if provided
                 if !initialPrompt.isEmpty && !hasUsedInitialPrompt {
                     hasUsedInitialPrompt = true
@@ -208,6 +227,74 @@ struct AIAdvisorView: View {
                         try? await Task.sleep(nanoseconds: 300_000_000) // Small delay for UI
                         await sendMessage()
                     }
+                }
+            }
+            .onDisappear {
+                // Save any streaming content before disappearing
+                saveStreamingContent()
+            }
+        }
+    }
+
+    private func saveStreamingContent() {
+        guard let messageId = streamingMessageId,
+              let message = chatMessages.first(where: { $0.id == messageId }) else {
+            return
+        }
+
+        if !streamingContent.isEmpty {
+            // Save partial content
+            message.content = streamingContent
+            try? modelContext.save()
+        }
+        // If empty, keep the placeholder - we'll resume on appear
+    }
+
+    private func resumeInterruptedConversation() {
+        // Find empty AI message (interrupted streaming)
+        let sortedMessages = chatMessages.sorted { $0.createdAt < $1.createdAt }
+        guard let emptyAIMessage = sortedMessages.last(where: { $0.role == "assistant" && $0.content.isEmpty }) else {
+            return
+        }
+
+        // Find the user question before it
+        guard let index = sortedMessages.firstIndex(where: { $0.id == emptyAIMessage.id }),
+              index > 0,
+              sortedMessages[index - 1].role == "user" else {
+            // No valid user question, clean up orphan
+            modelContext.delete(emptyAIMessage)
+            try? modelContext.save()
+            return
+        }
+
+        let userQuestion = sortedMessages[index - 1].content
+
+        // Resume streaming
+        streamingMessageId = emptyAIMessage.id
+        streamingContent = ""
+        isLoading = true
+
+        Task {
+            do {
+                try await askAIStreaming(question: userQuestion) { content in
+                    Task { @MainActor in
+                        streamingContent = content
+                    }
+                }
+                await MainActor.run {
+                    emptyAIMessage.content = streamingContent
+                    try? modelContext.save()
+                    streamingMessageId = nil
+                    streamingContent = ""
+                    isLoading = false
+                }
+            } catch {
+                await MainActor.run {
+                    emptyAIMessage.content = "抱歉，出现了错误：\(error.localizedDescription)"
+                    try? modelContext.save()
+                    streamingMessageId = nil
+                    streamingContent = ""
+                    isLoading = false
                 }
             }
         }
@@ -230,21 +317,35 @@ struct AIAdvisorView: View {
         try? modelContext.save()
 
         isLoading = true
+        streamingContent = ""
+
+        // Create placeholder assistant message for streaming
+        let assistantMessage = ChatMessage(role: "assistant", content: "")
+        modelContext.insert(assistantMessage)
+        try? modelContext.save()
+        streamingMessageId = assistantMessage.id
 
         do {
-            let response = try await askAI(question: question)
-            // Save assistant message on main thread
+            try await askAIStreaming(question: question) { content in
+                // Update streaming content on main thread
+                Task { @MainActor in
+                    streamingContent = content
+                }
+            }
+            // Final update with complete content
             await MainActor.run {
-                let assistantMessage = ChatMessage(role: "assistant", content: response)
-                modelContext.insert(assistantMessage)
+                assistantMessage.content = streamingContent
                 try? modelContext.save()
+                streamingMessageId = nil
+                streamingContent = ""
                 isLoading = false
             }
         } catch {
             await MainActor.run {
-                let errorMessage = ChatMessage(role: "assistant", content: "抱歉，出现了错误：\(error.localizedDescription)")
-                modelContext.insert(errorMessage)
+                assistantMessage.content = "抱歉，出现了错误：\(error.localizedDescription)"
                 try? modelContext.save()
+                streamingMessageId = nil
+                streamingContent = ""
                 isLoading = false
             }
         }
@@ -285,11 +386,13 @@ struct AIAdvisorView: View {
         let dynamicSummary = summaryForQuestion(question)
 
         let systemPrompt = """
-营养顾问AI。\(currentTimeContext)
+你是一位亲切友好的营养小助手，像朋友一样和用户聊天。\(currentTimeContext)
 
 \(dynamicSummary)
 
-规则：简洁回答，用数据支持，中文，不超过150字。用•列表，可用**粗体**。
+风格：温暖亲切，多用emoji表情😊🎉💪，像好朋友聊天。用"你"称呼用户，多鼓励夸奖。
+格式：用•列表，可用**粗体**强调。禁止表格和代码块。
+规则：简洁实用，用数据支持，中文，不超过150字。
 """
 
         var messages: [[String: String]] = [
@@ -311,11 +414,11 @@ struct AIAdvisorView: View {
 
         // Use highspeed model for faster response
         let requestBody: [String: Any] = [
-            "model": "MiniMax-M2.5-highspeed",
+            "model": "MiniMax-M2.7-highspeed",
             "messages": messages
         ]
 
-        var request = URLRequest(url: URL(string: "https://api.minimaxi.chat/v1/text/chatcompletion_v2")!)
+        var request = URLRequest(url: URL(string: "https://api.minimax.io/v1/text/chatcompletion_v2")!)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -372,6 +475,89 @@ struct AIAdvisorView: View {
         return choices.first?.message.content ?? "无法获取回复"
     }
 
+    private func askAIStreaming(question: String, onContent: @escaping (String) -> Void) async throws {
+        guard let apiKey = APIKeyManager.miniMaxAPIKey else {
+            throw AIServiceError.apiKeyNotConfigured
+        }
+
+        let dynamicSummary = summaryForQuestion(question)
+
+        let systemPrompt = """
+你是一位亲切友好的营养小助手，像朋友一样和用户聊天。\(currentTimeContext)
+
+\(dynamicSummary)
+
+风格：温暖亲切，多用emoji表情😊🎉💪，像好朋友聊天。用"你"称呼用户，多鼓励夸奖。
+格式：用•列表，可用**粗体**强调。禁止表格和代码块。
+规则：简洁实用，用数据支持，中文，不超过150字。
+"""
+
+        var messages: [[String: String]] = [
+            ["role": "system", "content": systemPrompt]
+        ]
+
+        // Only include messages from current session (not persisted history)
+        let currentSessionMessages = chatMessages.filter { $0.createdAt >= sessionStartTime }
+        for msg in currentSessionMessages {
+            // Skip empty messages (placeholder) and current question
+            if msg.content.isEmpty || (msg.role == "user" && msg.content == question) {
+                continue
+            }
+            messages.append(["role": msg.role, "content": msg.content])
+        }
+
+        messages.append(["role": "user", "content": question])
+
+        let requestBody: [String: Any] = [
+            "model": "MiniMax-M2.7-highspeed",
+            "messages": messages,
+            "stream": true
+        ]
+
+        var request = URLRequest(url: URL(string: "https://api.minimax.io/v1/text/chatcompletion_v2")!)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            throw AIServiceError.parsingError("HTTP错误")
+        }
+
+        var accumulatedContent = ""
+
+        for try await line in bytes.lines {
+            // SSE format: "data: {...}"
+            guard line.hasPrefix("data: ") else { continue }
+            let jsonString = String(line.dropFirst(6))
+
+            // Skip [DONE] marker
+            if jsonString == "[DONE]" { break }
+
+            guard let jsonData = jsonString.data(using: .utf8) else { continue }
+
+            struct StreamChunk: Decodable {
+                let choices: [Choice]?
+                struct Choice: Decodable {
+                    let delta: Delta
+                    struct Delta: Decodable {
+                        let content: String?
+                    }
+                }
+            }
+
+            if let chunk = try? JSONDecoder().decode(StreamChunk.self, from: jsonData),
+               let content = chunk.choices?.first?.delta.content,
+               !content.isEmpty {
+                accumulatedContent += content
+                onContent(accumulatedContent)
+            }
+        }
+    }
+
     private func formatDate(_ date: Date) -> String {
         if Calendar.current.isDateInToday(date) {
             return "今天"
@@ -385,13 +571,37 @@ struct AIAdvisorView: View {
     }
 }
 
+struct MessageRow: View {
+    let message: ChatMessage
+    let streamingMessageId: UUID?
+    let streamingContent: String
+
+    var body: some View {
+        if message.role == "user" {
+            UserMessageBubble(content: message.content)
+        } else {
+            let isStreaming = message.id == streamingMessageId
+            let displayContent = (isStreaming && !streamingContent.isEmpty)
+                ? streamingContent
+                : message.content
+
+            if displayContent.isEmpty && isStreaming {
+                TypingIndicatorBubble()
+            } else {
+                AIMessageBubble(content: displayContent)
+            }
+        }
+    }
+}
+
 struct UserMessageBubble: View {
     let content: String
 
     var body: some View {
         HStack {
-            Spacer()
+            Spacer(minLength: 60)
             Text(content)
+                .textSelection(.enabled)
                 .padding(12)
                 .background(Color.blue)
                 .foregroundStyle(.white)
@@ -403,14 +613,63 @@ struct UserMessageBubble: View {
 struct AIMessageBubble: View {
     let content: String
 
+    private var renderedContent: AttributedString {
+        // Use inlineOnly to preserve newlines, handle headers manually
+        var processed = content
+
+        // Convert headers to bold with line break
+        let lines = processed.components(separatedBy: "\n")
+        let processedLines = lines.map { line -> String in
+            if line.hasPrefix("### ") {
+                return "**" + line.dropFirst(4) + "**"
+            } else if line.hasPrefix("## ") {
+                return "**" + line.dropFirst(3) + "**"
+            } else if line.hasPrefix("# ") {
+                return "**" + line.dropFirst(2) + "**"
+            }
+            return line
+        }
+        processed = processedLines.joined(separator: "\n")
+
+        return (try? AttributedString(markdown: processed, options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace))) ?? AttributedString(content)
+    }
+
     var body: some View {
         HStack(alignment: .top) {
-            Text(.init(content))  // This enables markdown rendering
+            Text(renderedContent)
                 .textSelection(.enabled)
                 .padding(12)
                 .background(Color(.systemGray5))
                 .clipShape(RoundedRectangle(cornerRadius: 16))
-            Spacer()
+            Spacer(minLength: 60)
+        }
+    }
+}
+
+struct TypingIndicatorBubble: View {
+    @State private var dotCount = 0
+    let timer = Timer.publish(every: 0.4, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        HStack(alignment: .top) {
+            HStack(spacing: 4) {
+                Text("🤔 让我想想")
+                HStack(spacing: 2) {
+                    ForEach(0..<3) { index in
+                        Circle()
+                            .fill(Color.secondary)
+                            .frame(width: 6, height: 6)
+                            .opacity(dotCount % 4 > index ? 1.0 : 0.3)
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color(.systemGray5))
+            .clipShape(RoundedRectangle(cornerRadius: 16))
+            Spacer(minLength: 60)
+        }
+        .onReceive(timer) { _ in
+            dotCount += 1
         }
     }
 }

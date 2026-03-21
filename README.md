@@ -167,8 +167,8 @@ CalorieCop/
 ### MiniMax API (Text Parsing)
 
 - Provider: MiniMax
-- Endpoint: `https://api.minimaxi.chat/v1/text/chatcompletion_v2`
-- Model: `MiniMax-M2.5-highspeed` (fast text parsing, ~3s response)
+- Endpoint: `https://api.minimax.io/v1/text/chatcompletion_v2`
+- Model: `MiniMax-M2.7-highspeed` (fast text parsing)
 - Used for: Text food input, AI advisor chat
 - Response format: JSON array
 - Get API key: [MiniMax Platform](https://platform.minimaxi.com/) → API Keys

@@ -21,6 +21,28 @@ struct HistoryView: View {
         return latestHealthKit ?? latestManual
     }
 
+    // Combine HealthKit and manual weight data for AI advisor
+    private var combinedWeightHistory: [WeightRecord] {
+        var allRecords: [WeightRecord] = []
+
+        // Add HealthKit records
+        allRecords.append(contentsOf: healthKitService.dailyWeights)
+
+        // Add manual records
+        for entry in weightEntries {
+            allRecords.append(WeightRecord(date: entry.date, weight: entry.weight))
+        }
+
+        // Sort by date descending and remove duplicates (keep first for same day)
+        let grouped = Dictionary(grouping: allRecords) { record in
+            Calendar.current.startOfDay(for: record.date)
+        }
+
+        return grouped.map { (_, records) in
+            records.first!
+        }.sorted { $0.date > $1.date }
+    }
+
     private var estimatedTDEE: Double {
         guard let goal = currentGoal, let weight = currentWeight else { return 2000 }
         return goal.calculateTDEE(currentWeight: weight)
@@ -58,7 +80,7 @@ struct HistoryView: View {
                     foodEntries: allEntries,
                     userGoal: currentGoal,
                     currentWeight: currentWeight,
-                    weightHistory: weightEntries
+                    weightHistory: combinedWeightHistory
                 )
             }
             .task {
