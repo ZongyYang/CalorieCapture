@@ -63,6 +63,10 @@ struct FoodInputView: View {
                 }
                 .padding()
             }
+            .scrollDismissesKeyboard(.interactively)
+            .onTapGesture {
+                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            }
             .navigationTitle("记录食物")
             .sheet(isPresented: $showConfirmation) {
                 if let nutrition = parsedNutrition {
@@ -108,10 +112,6 @@ struct FoodInputView: View {
                         selectedImage = image
                     }
                 }
-            }
-            .onTapGesture {
-                // Dismiss keyboard when tapping outside text field
-                UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             }
         }
     }
