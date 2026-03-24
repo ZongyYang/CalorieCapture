@@ -40,6 +40,7 @@
 		A1000022238ABCDE /* FoodPreference.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100022238ABCDE /* FoodPreference.swift */; };
 		A1000023238ABCDE /* DebugLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100023238ABCDE /* DebugLogger.swift */; };
 		A1000024238ABCDE /* APIKeySetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100024238ABCDE /* APIKeySetupView.swift */; };
+		A1000025238ABCDE /* DataMigrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100025238ABCDE /* DataMigrationService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -78,6 +79,7 @@
 		A1100022238ABCDE /* FoodPreference.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FoodPreference.swift; sourceTree = "<group>"; };
 		A1100023238ABCDE /* DebugLogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugLogger.swift; sourceTree = "<group>"; };
 		A1100024238ABCDE /* APIKeySetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeySetupView.swift; sourceTree = "<group>"; };
+		A1100025238ABCDE /* DataMigrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataMigrationService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -162,6 +164,7 @@
 				A1100009238ABCDE /* APIKeyManager.swift */,
 				A110001B238ABCDE /* Secrets.swift */,
 				A1100023238ABCDE /* DebugLogger.swift */,
+				A1100025238ABCDE /* DataMigrationService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -177,14 +180,6 @@
 				A130001C238ABCDE /* Settings */,
 			);
 			path = Views;
-			sourceTree = "<group>";
-		};
-		A130001C238ABCDE /* Settings */ = {
-			isa = PBXGroup;
-			children = (
-				A1100024238ABCDE /* APIKeySetupView.swift */,
-			);
-			path = Settings;
 			sourceTree = "<group>";
 		};
 		A1300014238ABCDE /* Utilities */ = {
@@ -259,6 +254,14 @@
 				A110001D238ABCDE /* ManualWeightEntryView.swift */,
 			);
 			path = Goals;
+			sourceTree = "<group>";
+		};
+		A130001C238ABCDE /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				A1100024238ABCDE /* APIKeySetupView.swift */,
+			);
+			path = Settings;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -362,6 +365,7 @@
 				A1000022238ABCDE /* FoodPreference.swift in Sources */,
 				A1000023238ABCDE /* DebugLogger.swift in Sources */,
 				A1000024238ABCDE /* APIKeySetupView.swift in Sources */,
+				A1000025238ABCDE /* DataMigrationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -493,6 +497,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = CalorieCop/CalorieCop.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZSS6WXY389;
@@ -512,8 +517,9 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.CalorieCop;
+				PRODUCT_BUNDLE_IDENTIFIER = com.caloriecop.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -526,6 +532,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = CalorieCop/CalorieCop.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = ZSS6WXY389;
@@ -545,8 +552,9 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.CalorieCop;
+				PRODUCT_BUNDLE_IDENTIFIER = com.caloriecop.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				PROVISIONING_PROFILE_SPECIFIER = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";

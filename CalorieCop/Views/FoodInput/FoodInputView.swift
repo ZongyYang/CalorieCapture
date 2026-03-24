@@ -4,7 +4,12 @@ import PhotosUI
 
 struct FoodInputView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @Query(sort: \FoodPreference.usageCount, order: .reverse) private var foodPreferences: [FoodPreference]
+
+    // Optional target date for backfilling entries
+    var targetDate: Date?
+    var onSaved: (() -> Void)?
 
     @State private var inputText = ""
     @State private var isLoading = false
@@ -44,6 +49,24 @@ struct FoodInputView: View {
         UIImagePickerController.isSourceTypeAvailable(.camera)
     }
 
+    private var isBackfillMode: Bool {
+        targetDate != nil
+    }
+
+    private var effectiveDate: Date {
+        targetDate ?? Date()
+    }
+
+    private var targetDateFormatted: String {
+        guard let date = targetDate else { return "" }
+        if Calendar.current.isDateInYesterday(date) {
+            return "昨天"
+        }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "M月d日"
+        return formatter.string(from: date)
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -54,6 +77,21 @@ struct FoodInputView: View {
                     if !isAPIConfigured {
                         apiKeyPromptSection
                     } else {
+                        // Backfill mode banner
+                        if isBackfillMode {
+                            HStack {
+                                Image(systemName: "calendar.badge.plus")
+                                    .foregroundStyle(.blue)
+                                Text("正在为 \(targetDateFormatted) 补录食物")
+                                    .font(.subheadline)
+                                    .fontWeight(.medium)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue.opacity(0.1))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+
                         instructionText
 
                         // Image input section
@@ -89,7 +127,7 @@ struct FoodInputView: View {
             .onTapGesture {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             }
-            .navigationTitle("记录食物")
+            .navigationTitle(isBackfillMode ? "补录食物" : "记录食物")
             .toolbar {
                 if isAPIConfigured {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -556,7 +594,21 @@ struct FoodInputView: View {
     }
 
     private func saveFoodEntry(with nutrition: NutritionInfo) {
-        let entry = FoodEntry(rawInput: inputText.isEmpty ? "图片识别: \(nutrition.foodName)" : inputText, nutrition: nutrition)
+        let rawInput = inputText.isEmpty ? "图片识别: \(nutrition.foodName)" : inputText
+
+        // Use target date if in backfill mode, otherwise use the nutrition's entry date
+        let entryDate = targetDate ?? nutrition.entryDate
+
+        let entry = FoodEntry(
+            rawInput: rawInput,
+            foodName: nutrition.foodName,
+            grams: nutrition.grams,
+            calories: nutrition.calories,
+            protein: nutrition.protein,
+            carbohydrates: nutrition.carbohydrates,
+            fat: nutrition.fat,
+            date: entryDate
+        )
         modelContext.insert(entry)
 
         // Explicitly save to ensure Dashboard updates immediately
@@ -571,11 +623,29 @@ struct FoodInputView: View {
 
         // Dismiss keyboard
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+
+        // Call completion handler and dismiss if in backfill mode
+        onSaved?()
+        if isBackfillMode {
+            dismiss()
+        }
     }
 
     private func saveMultipleFoodEntries(_ nutritionList: [NutritionInfo]) {
         for nutrition in nutritionList {
-            let entry = FoodEntry(rawInput: inputText, nutrition: nutrition)
+            // Use target date if in backfill mode
+            let entryDate = targetDate ?? nutrition.entryDate
+
+            let entry = FoodEntry(
+                rawInput: inputText,
+                foodName: nutrition.foodName,
+                grams: nutrition.grams,
+                calories: nutrition.calories,
+                protein: nutrition.protein,
+                carbohydrates: nutrition.carbohydrates,
+                fat: nutrition.fat,
+                date: entryDate
+            )
             modelContext.insert(entry)
         }
         try? modelContext.save()
@@ -587,6 +657,12 @@ struct FoodInputView: View {
         showMultipleConfirmation = false
 
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+
+        // Call completion handler and dismiss if in backfill mode
+        onSaved?()
+        if isBackfillMode {
+            dismiss()
+        }
     }
 }
 

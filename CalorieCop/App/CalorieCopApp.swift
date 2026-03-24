@@ -24,6 +24,11 @@ struct CalorieCopApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onAppear {
+                    // Migrate data from old app on first launch
+                    let context = sharedModelContainer.mainContext
+                    DataMigrationService.migrateIfNeeded(modelContext: context)
+                }
         }
         .modelContainer(sharedModelContainer)
     }

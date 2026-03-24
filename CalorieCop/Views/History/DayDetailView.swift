@@ -7,6 +7,7 @@ struct DayDetailView: View {
     @State private var entries: [FoodEntry]
     @State private var entryToDelete: FoodEntry?
     @State private var showingDeleteConfirmation = false
+    @State private var showingBackfillSheet = false
 
     init(date: Date, entries: [FoodEntry]) {
         self.date = date
@@ -118,6 +119,31 @@ struct DayDetailView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle(formatDate(date))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    showingBackfillSheet = true
+                } label: {
+                    Image(systemName: "plus.circle.fill")
+                    Text("补录")
+                }
+            }
+        }
+        .sheet(isPresented: $showingBackfillSheet) {
+            NavigationStack {
+                FoodInputView(targetDate: date) {
+                    // Refresh entries after saving
+                    refreshEntries()
+                }
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("取消") {
+                            showingBackfillSheet = false
+                        }
+                    }
+                }
+            }
+        }
         .alert("确认删除", isPresented: $showingDeleteConfirmation) {
             Button("取消", role: .cancel) {
                 entryToDelete = nil
@@ -139,6 +165,22 @@ struct DayDetailView: View {
         try? modelContext.save()
         entries.removeAll { $0.id == entry.id }
         entryToDelete = nil
+    }
+
+    private func refreshEntries() {
+        let startOfDay = Calendar.current.startOfDay(for: date)
+        let endOfDay = Calendar.current.date(byAdding: .day, value: 1, to: startOfDay) ?? startOfDay
+
+        let descriptor = FetchDescriptor<FoodEntry>(
+            predicate: #Predicate<FoodEntry> { entry in
+                entry.createdAt >= startOfDay && entry.createdAt < endOfDay
+            },
+            sortBy: [SortDescriptor(\.createdAt)]
+        )
+
+        if let fetchedEntries = try? modelContext.fetch(descriptor) {
+            entries = fetchedEntries
+        }
     }
 
     private func formatDate(_ date: Date) -> String {
