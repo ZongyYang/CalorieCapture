@@ -5,19 +5,49 @@ struct CalorieBalanceView: View {
     let burned: Double
     var targetDeficit: Double? = nil  // The planned daily calorie deficit to reach weight goal
 
-    var balance: Double {
+    // Current signed deficit. Positive means burned more than consumed;
+    // negative means consumed more than burned.
+    var currentDeficit: Double {
         burned - consumed
     }
 
     var isDeficit: Bool {
-        balance > 0
+        currentDeficit >= 0
     }
 
-    // 还能吃 = 消耗 - 目标缺口 - 已摄入
-    // This dynamically changes based on actual vs estimated burned calories
-    var remaining: Double? {
+    // Positive means the current deficit has not reached the target yet.
+    // Negative means the current deficit is larger than the target deficit.
+    private var targetDeficitDelta: Double? {
         guard let deficit = targetDeficit else { return nil }
-        return burned - deficit - consumed
+        return deficit - currentDeficit
+    }
+
+    private var currentDeficitLabel: String {
+        isDeficit ? "缺口" : "超出"
+    }
+
+    @ViewBuilder
+    private var targetDeficitStatusLabel: some View {
+        if let delta = targetDeficitDelta {
+            let distance = abs(delta)
+
+            if distance < 0.5 {
+                Label("已达到目标缺口", systemImage: "checkmark.circle.fill")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.green)
+            } else if delta > 0 {
+                Label("距目标缺口还差 \(Int(distance.rounded())) kcal", systemImage: "hourglass")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.orange)
+            } else {
+                Label("已超过目标缺口 \(Int(distance.rounded())) kcal", systemImage: "checkmark.circle.fill")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.green)
+            }
+        }
     }
 
     var body: some View {
@@ -65,35 +95,25 @@ struct CalorieBalanceView: View {
                     Image(systemName: isDeficit ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
                         .font(.title2)
                         .foregroundStyle(isDeficit ? .green : .red)
-                    Text(abs(balance).formattedCalories)
+                    Text(abs(currentDeficit).formattedCalories)
                         .font(.title)
                         .fontWeight(.bold)
                         .lineLimit(1)
                         .minimumScaleFactor(0.8)
                         .foregroundStyle(isDeficit ? .green : .red)
-                    Text(isDeficit ? "缺口" : "盈余")
+                    Text(currentDeficitLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(minWidth: 70)
             }
 
-            // Show remaining calories based on target deficit
-            if let remaining = remaining, let deficit = targetDeficit {
+            // Compare the signed current deficit with the planned target deficit.
+            if let deficit = targetDeficit {
                 Divider()
 
                 HStack {
-                    if remaining > 0 {
-                        Label("还可吃 \(Int(remaining)) kcal", systemImage: "checkmark.circle.fill")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.green)
-                    } else {
-                        Label("已超出 \(Int(-remaining)) kcal", systemImage: "exclamationmark.triangle.fill")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.red)
-                    }
+                    targetDeficitStatusLabel
 
                     Spacer()
 

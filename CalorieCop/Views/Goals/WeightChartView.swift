@@ -14,6 +14,29 @@ struct WeightChartView: View {
         weightUnit.fromKg(kgValue)
     }
 
+    private var xAxisDates: [Date] {
+        let dates = weightHistory.map(\.date).sorted()
+        let maxLabelCount = 5
+
+        guard dates.count > maxLabelCount else {
+            return dates
+        }
+
+        let lastIndex = dates.count - 1
+        return (0..<maxLabelCount).map { index in
+            let scaledIndex = Double(index) * Double(lastIndex) / Double(maxLabelCount - 1)
+            return dates[Int(scaledIndex.rounded())]
+        }
+    }
+
+    private func formatAxisDate(_ date: Date) -> String {
+        let components = Calendar.current.dateComponents([.month, .day], from: date)
+        guard let month = components.month, let day = components.day else {
+            return ""
+        }
+        return "\(month)/\(day)"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("体重趋势")
@@ -80,18 +103,19 @@ struct WeightChartView: View {
                 RuleMark(y: .value("目标", convertWeight(target)))
                     .foregroundStyle(.green)
                     .lineStyle(StrokeStyle(lineWidth: 2, dash: [5, 5]))
-                    .annotation(position: .trailing, alignment: .trailing) {
-                        Text("目标")
-                            .font(.caption2)
-                            .foregroundStyle(.green)
-                            .padding(.trailing, 4)
-                    }
             }
         }
         .chartYScale(domain: yAxisDomain)
         .chartXAxis {
-            AxisMarks(values: .stride(by: .day, count: 7)) { _ in
-                AxisValueLabel(format: .dateTime.month().day())
+            AxisMarks(values: xAxisDates) { value in
+                if let date = value.as(Date.self) {
+                    AxisValueLabel {
+                        Text(formatAxisDate(date))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
             }
         }
     }

@@ -15,7 +15,7 @@ struct ContentView: View {
 
             GoalsView()
                 .tabItem {
-                    Label("目标", systemImage: "target")
+                    Label("统计", systemImage: "chart.line.uptrend.xyaxis")
                 }
 
             HistoryView()

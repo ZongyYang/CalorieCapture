@@ -90,9 +90,21 @@ struct FoodEntryRow: View {
                 Text(entry.foodName)
                     .font(.headline)
 
-                Text("\(entry.grams.formattedGrams)g")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if let brand = entry.brand {
+                    Text(brand)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+
+                HStack(spacing: 6) {
+                    Label(entry.displayCategoryName, systemImage: entry.displayCategorySystemImage)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                    Text("\(entry.grams.formattedGrams)\(entry.category.quantityUnitSymbol)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Spacer()

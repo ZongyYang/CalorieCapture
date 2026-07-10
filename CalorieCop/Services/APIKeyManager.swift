@@ -32,6 +32,7 @@ enum APIRegion: String, CaseIterable {
 
 enum APIKeyManager {
     private static let miniMaxKeyUserDefaultsKey = "user_minimax_api_key"
+    private static let deepSeekKeyUserDefaultsKey = "user_deepseek_api_key"
     private static let qwenKeyUserDefaultsKey = "user_qwen_api_key"
     private static let regionUserDefaultsKey = "user_api_region"
 
@@ -50,6 +51,23 @@ enum APIKeyManager {
 
         // Fallback to environment variable
         return ProcessInfo.processInfo.environment["MINIMAX_API_KEY"]
+    }
+
+    static var deepSeekAPIKey: String? {
+        // First check UserDefaults (user-entered key)
+        if let userKey = UserDefaults.standard.string(forKey: deepSeekKeyUserDefaultsKey),
+           !userKey.isEmpty {
+            return userKey
+        }
+
+        // Then check Secrets.swift (gitignored, for developer use)
+        let key = Secrets.deepSeekAPIKey
+        if !key.isEmpty && key != "your_api_key_here" {
+            return key
+        }
+
+        // Fallback to environment variable
+        return ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
     }
 
     static var qwenAPIKey: String? {
@@ -74,6 +92,11 @@ enum APIKeyManager {
         return !key.isEmpty
     }
 
+    static var isDeepSeekConfigured: Bool {
+        guard let key = deepSeekAPIKey else { return false }
+        return !key.isEmpty
+    }
+
     static var isQwenConfigured: Bool {
         guard let key = qwenAPIKey else { return false }
         return !key.isEmpty
@@ -85,17 +108,27 @@ enum APIKeyManager {
         UserDefaults.standard.set(key, forKey: miniMaxKeyUserDefaultsKey)
     }
 
+    static func setUserDeepSeekKey(_ key: String) {
+        UserDefaults.standard.set(key, forKey: deepSeekKeyUserDefaultsKey)
+    }
+
     static func setUserQwenKey(_ key: String) {
         UserDefaults.standard.set(key, forKey: qwenKeyUserDefaultsKey)
     }
 
     static func clearUserKeys() {
         UserDefaults.standard.removeObject(forKey: miniMaxKeyUserDefaultsKey)
+        UserDefaults.standard.removeObject(forKey: deepSeekKeyUserDefaultsKey)
         UserDefaults.standard.removeObject(forKey: qwenKeyUserDefaultsKey)
     }
 
     static var hasUserMiniMaxKey: Bool {
         guard let key = UserDefaults.standard.string(forKey: miniMaxKeyUserDefaultsKey) else { return false }
+        return !key.isEmpty
+    }
+
+    static var hasUserDeepSeekKey: Bool {
+        guard let key = UserDefaults.standard.string(forKey: deepSeekKeyUserDefaultsKey) else { return false }
         return !key.isEmpty
     }
 
@@ -121,6 +154,10 @@ enum APIKeyManager {
 
     static var miniMaxEndpoint: URL {
         region.miniMaxEndpoint
+    }
+
+    static var deepSeekEndpoint: URL {
+        URL(string: "https://api.deepseek.com/chat/completions")!
     }
 
     static var qwenEndpoint: URL {

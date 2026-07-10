@@ -4,8 +4,10 @@ struct APIKeySetupView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var miniMaxKey = ""
+    @State private var deepSeekKey = ""
     @State private var qwenKey = ""
     @State private var showMiniMaxKey = false
+    @State private var showDeepSeekKey = false
     @State private var showQwenKey = false
     @State private var selectedRegion: APIRegion = .international
     @State private var refreshTrigger = false  // Force UI refresh
@@ -65,10 +67,22 @@ struct APIKeySetupView: View {
                         websiteURL: miniMaxWebsiteURL
                     )
 
-                    // Qwen API Section (Optional)
+                    // DeepSeek API Section
                     apiKeySection(
-                        title: "阿里云 Qwen API（可选）",
-                        subtitle: "用于图片食物识别",
+                        title: "DeepSeek API",
+                        subtitle: "用于文字解析和 AI 顾问",
+                        key: $deepSeekKey,
+                        showKey: $showDeepSeekKey,
+                        isConfigured: APIKeyManager.isDeepSeekConfigured,
+                        hasUserKey: APIKeyManager.hasUserDeepSeekKey,
+                        instructions: deepSeekInstructions,
+                        websiteURL: deepSeekWebsiteURL
+                    )
+
+                    // Qwen API Section
+                    apiKeySection(
+                        title: "阿里云 Qwen API",
+                        subtitle: "用于图片食物识别；也可作为文字解析备用",
                         key: $qwenKey,
                         showKey: $showQwenKey,
                         isConfigured: APIKeyManager.isQwenConfigured,
@@ -108,10 +122,11 @@ struct APIKeySetupView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
 
                     // Clear keys button - show if user has entered keys
-                    if APIKeyManager.hasUserMiniMaxKey || APIKeyManager.hasUserQwenKey {
+                    if APIKeyManager.hasUserMiniMaxKey || APIKeyManager.hasUserDeepSeekKey || APIKeyManager.hasUserQwenKey {
                         Button(role: .destructive) {
                             APIKeyManager.clearUserKeys()
                             miniMaxKey = ""
+                            deepSeekKey = ""
                             qwenKey = ""
                             refreshTrigger.toggle()  // Force UI refresh
                         } label: {
@@ -134,6 +149,18 @@ struct APIKeySetupView: View {
                             Image(systemName: "info.circle")
                                 .foregroundStyle(.blue)
                             Text("MiniMax 正在使用开发者预设密钥")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding()
+                        .background(Color.blue.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    if !APIKeyManager.hasUserDeepSeekKey && APIKeyManager.isDeepSeekConfigured {
+                        HStack {
+                            Image(systemName: "info.circle")
+                                .foregroundStyle(.blue)
+                            Text("DeepSeek 正在使用开发者预设密钥")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -184,8 +211,9 @@ struct APIKeySetupView: View {
         // Can save if region changed or new key entered
         let regionChanged = selectedRegion != APIKeyManager.region
         let hasMiniMax = !miniMaxKey.isEmpty
+        let hasDeepSeek = !deepSeekKey.isEmpty
         let hasQwen = !qwenKey.isEmpty
-        return regionChanged || hasMiniMax || hasQwen
+        return regionChanged || hasMiniMax || hasDeepSeek || hasQwen
     }
 
     // MARK: - Region-specific instructions
@@ -235,6 +263,19 @@ struct APIKeySetupView: View {
                 "4. 复制密钥并粘贴到下方"
             ]
         }
+    }
+
+    private var deepSeekInstructions: [String] {
+        [
+            "1. 访问 DeepSeek 开放平台并登录",
+            "2. 进入 API Keys",
+            "3. 创建新的 API Key",
+            "4. 复制密钥并粘贴到下方"
+        ]
+    }
+
+    private var deepSeekWebsiteURL: String {
+        "https://platform.deepseek.com/api_keys"
     }
 
     private var qwenWebsiteURL: String {
@@ -381,6 +422,9 @@ struct APIKeySetupView: View {
         if !miniMaxKey.isEmpty {
             APIKeyManager.setUserMiniMaxKey(miniMaxKey)
         }
+        if !deepSeekKey.isEmpty {
+            APIKeyManager.setUserDeepSeekKey(deepSeekKey)
+        }
         if !qwenKey.isEmpty {
             APIKeyManager.setUserQwenKey(qwenKey)
         }
@@ -390,6 +434,19 @@ struct APIKeySetupView: View {
 }
 
 // MARK: - Compact API Key Prompt View
+
+struct APISettingsToolbarButton: View {
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            Image(systemName: "gear")
+        }
+        .accessibilityLabel("API设置")
+    }
+}
 
 struct APIKeyPromptView: View {
     let onSetup: () -> Void

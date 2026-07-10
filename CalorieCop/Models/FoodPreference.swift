@@ -5,6 +5,7 @@ import SwiftData
 final class FoodPreference {
     var id: UUID
     var keyword: String          // 用户输入的关键词，如 "咖啡牛奶"
+    var brand: String?
     var defaultDescription: String  // 默认描述，如 "150ml全脂牛奶"
     var createdAt: Date
     var usageCount: Int          // 使用次数，用于排序
@@ -16,17 +17,18 @@ final class FoodPreference {
     var defaultCarbs: Double?
     var defaultFat: Double?
 
-    init(keyword: String, defaultDescription: String) {
+    init(keyword: String, brand: String? = nil, defaultDescription: String) {
         self.id = UUID()
         self.keyword = keyword
+        self.brand = Self.normalizedOptionalText(brand)
         self.defaultDescription = defaultDescription
         self.createdAt = Date()
         self.usageCount = 1
     }
 
     /// 创建带有具体营养数值的偏好
-    convenience init(keyword: String, grams: Double, calories: Double, protein: Double, carbs: Double, fat: Double) {
-        self.init(keyword: keyword, defaultDescription: "\(Int(grams))g, \(Int(calories))kcal")
+    convenience init(keyword: String, brand: String? = nil, grams: Double, calories: Double, protein: Double, carbs: Double, fat: Double) {
+        self.init(keyword: keyword, brand: brand, defaultDescription: "\(Int(grams))g, \(Int(calories))kcal")
         self.defaultGrams = grams
         self.defaultCalories = calories
         self.defaultProtein = protein
@@ -44,5 +46,23 @@ final class FoodPreference {
             return "\(Int(grams))g, \(Int(calories))kcal, 蛋白质\(String(format: "%.1f", protein))g, 碳水\(String(format: "%.1f", carbs))g, 脂肪\(String(format: "%.1f", fat))g"
         }
         return defaultDescription
+    }
+
+    func updateBrand(_ value: String?) {
+        brand = Self.normalizedOptionalText(value)
+    }
+
+    func matches(keyword: String, brand: String?) -> Bool {
+        Self.normalizedText(self.keyword) == Self.normalizedText(keyword)
+            && Self.normalizedOptionalText(self.brand) == Self.normalizedOptionalText(brand)
+    }
+
+    private static func normalizedText(_ text: String) -> String {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func normalizedOptionalText(_ text: String?) -> String? {
+        let trimmedText = text?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return trimmedText.isEmpty ? nil : trimmedText
     }
 }

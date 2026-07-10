@@ -10,10 +10,19 @@ final class UserGoal {
     var age: Int
     var gender: String                // "male" or "female"
     var activityLevel: String         // "sedentary", "light", "moderate", "active", "very_active"
+    var dailyCalorieDeficit: Double?  // User-defined daily calorie deficit
     var createdAt: Date
     var updatedAt: Date
 
-    init(targetWeight: Double, height: Double, age: Int, gender: String, activityLevel: String, targetDate: Date? = nil) {
+    init(
+        targetWeight: Double,
+        height: Double,
+        age: Int,
+        gender: String,
+        activityLevel: String,
+        targetDate: Date? = nil,
+        dailyCalorieDeficit: Double? = nil
+    ) {
         self.id = UUID()
         self.targetWeight = targetWeight
         self.height = height
@@ -21,6 +30,7 @@ final class UserGoal {
         self.gender = gender
         self.activityLevel = activityLevel
         self.targetDate = targetDate
+        self.dailyCalorieDeficit = dailyCalorieDeficit
         self.createdAt = Date()
         self.updatedAt = Date()
     }
@@ -51,15 +61,11 @@ final class UserGoal {
         return calculateBMR(currentWeight: currentWeight) * activityMultiplier
     }
 
-    // Calculate recommended daily calories for weight loss
-    // 0.5kg/week loss = 500 kcal deficit per day
-    func recommendedDailyCalories(currentWeight: Double) -> Double {
-        let tdee = calculateTDEE(currentWeight: currentWeight)
+    func automaticDailyDeficit(currentWeight: Double) -> Double {
         let weightToLose = currentWeight - targetWeight
 
         if weightToLose <= 0 {
-            // Already at or below target
-            return tdee
+            return 0
         }
 
         // Calculate deficit based on target date or default 0.5kg/week
@@ -75,7 +81,23 @@ final class UserGoal {
             }
         }
 
+        return dailyDeficit
+    }
+
+    func plannedDailyDeficit(currentWeight: Double) -> Double {
+        if let dailyCalorieDeficit {
+            return max(dailyCalorieDeficit, 0)
+        }
+        return automaticDailyDeficit(currentWeight: currentWeight)
+    }
+
+    // Calculate recommended daily calories for weight loss.
+    // If HealthKit average expenditure is available, use it instead of formula TDEE.
+    func recommendedDailyCalories(currentWeight: Double, dailyEnergyExpenditure: Double? = nil) -> Double {
+        let expenditure = dailyEnergyExpenditure ?? calculateTDEE(currentWeight: currentWeight)
+        let dailyDeficit = plannedDailyDeficit(currentWeight: currentWeight)
+
         // Minimum 1200 kcal for safety
-        return max(tdee - dailyDeficit, 1200)
+        return max(expenditure - dailyDeficit, 1200)
     }
 }

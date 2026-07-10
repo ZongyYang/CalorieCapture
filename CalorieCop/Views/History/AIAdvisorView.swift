@@ -1,6 +1,20 @@
 import SwiftUI
 import SwiftData
 
+struct AIAdvisorToolbarButton: View {
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            Image(systemName: "sparkles")
+            Text("AI顾问")
+        }
+        .accessibilityLabel("AI顾问")
+    }
+}
+
 struct AIAdvisorView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
@@ -20,6 +34,11 @@ struct AIAdvisorView: View {
     @State private var streamingMessageId: UUID?  // Track message being streamed
     @State private var streamingContent = ""  // Accumulate streaming content
     @State private var showingAPIKeySetup = false  // API key setup sheet
+    @State private var apiKeyRefreshTrigger = false
+
+    private var isAdvisorAPIConfigured: Bool {
+        APIKeyManager.isDeepSeekConfigured || APIKeyManager.isMiniMaxConfigured || APIKeyManager.isQwenConfigured
+    }
 
     /// Analyze question to determine what data to include
     private func detectDataNeeds(from question: String) -> (needsWeight: Bool, needsFood: Bool, foodDays: Int) {
@@ -125,7 +144,8 @@ struct AIAdvisorView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                if !APIKeyManager.isMiniMaxConfigured {
+                let _ = apiKeyRefreshTrigger
+                if !isAdvisorAPIConfigured {
                     // API Key not configured - show setup prompt
                     Spacer()
                     apiKeyPromptSection
@@ -142,7 +162,11 @@ struct AIAdvisorView: View {
                                 MessageRow(
                                     message: message,
                                     streamingMessageId: streamingMessageId,
-                                    streamingContent: streamingContent
+                                    streamingContent: streamingContent,
+                                    canDelete: message.id != streamingMessageId,
+                                    onDelete: {
+                                        deleteMessage(message)
+                                    }
                                 )
                                 .id(message.id)
                             }
@@ -204,7 +228,7 @@ struct AIAdvisorView: View {
                         Button {
                             showingDeleteConfirmation = true
                         } label: {
-                            Image(systemName: "trash")
+                            Text("清空")
                                 .foregroundStyle(.red)
                         }
                     }
@@ -242,7 +266,9 @@ struct AIAdvisorView: View {
                 saveStreamingContent()
             }
             .sheet(isPresented: $showingAPIKeySetup) {
-                APIKeySetupView()
+                APIKeySetupView {
+                    apiKeyRefreshTrigger.toggle()
+                }
             }
         }
     }
@@ -257,7 +283,7 @@ struct AIAdvisorView: View {
                 .font(.title2)
                 .fontWeight(.bold)
 
-            Text("AI 顾问需要 MiniMax API 密钥才能使用。请先设置 API 密钥。")
+            Text("AI 顾问需要 DeepSeek、MiniMax 或 Qwen API 密钥才能使用。请先设置至少一个 API 密钥。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -321,13 +347,13 @@ struct AIAdvisorView: View {
 
         Task {
             do {
-                try await askAIStreaming(question: userQuestion) { content in
+                let finalContent = try await askAIStreaming(question: userQuestion) { content in
                     Task { @MainActor in
                         streamingContent = content
                     }
                 }
                 await MainActor.run {
-                    emptyAIMessage.content = streamingContent
+                    emptyAIMessage.content = finalContent
                     try? modelContext.save()
                     streamingMessageId = nil
                     streamingContent = ""
@@ -346,9 +372,19 @@ struct AIAdvisorView: View {
     }
 
     private func deleteAllMessages() {
+        streamingMessageId = nil
+        streamingContent = ""
+        isLoading = false
+
         for message in chatMessages {
             modelContext.delete(message)
         }
+        try? modelContext.save()
+    }
+
+    private func deleteMessage(_ message: ChatMessage) {
+        guard message.id != streamingMessageId else { return }
+        modelContext.delete(message)
         try? modelContext.save()
     }
 
@@ -371,7 +407,7 @@ struct AIAdvisorView: View {
         streamingMessageId = assistantMessage.id
 
         do {
-            try await askAIStreaming(question: question) { content in
+            let finalContent = try await askAIStreaming(question: question) { content in
                 // Update streaming content on main thread
                 Task { @MainActor in
                     streamingContent = content
@@ -379,7 +415,7 @@ struct AIAdvisorView: View {
             }
             // Final update with complete content
             await MainActor.run {
-                assistantMessage.content = streamingContent
+                assistantMessage.content = finalContent
                 try? modelContext.save()
                 streamingMessageId = nil
                 streamingContent = ""
@@ -579,28 +615,74 @@ struct AIAdvisorView: View {
         return choices.first?.message.content ?? "无法获取回复"
     }
 
-    private func askAIStreaming(question: String, onContent: @escaping (String) -> Void) async throws {
-        guard let apiKey = APIKeyManager.miniMaxAPIKey else {
-            throw AIServiceError.apiKeyNotConfigured
+    private func askAIStreaming(question: String, onContent: @escaping (String) -> Void) async throws -> String {
+        let messages = advisorMessages(for: question)
+        var errors: [String] = []
+
+        if let deepSeekAPIKey = APIKeyManager.deepSeekAPIKey, !deepSeekAPIKey.isEmpty {
+            do {
+                let content = try await requestDeepSeekAdvisor(apiKey: deepSeekAPIKey, messages: messages)
+                onContent(content)
+                return content
+            } catch {
+                DebugLogger.shared.logError(error, context: "AI Advisor DeepSeek failed")
+                errors.append("DeepSeek：\(compactChatError(error))")
+            }
         }
 
-        let dynamicSummary = summaryForQuestion(question)
+        if let miniMaxAPIKey = APIKeyManager.miniMaxAPIKey, !miniMaxAPIKey.isEmpty {
+            do {
+                return try await requestMiniMaxStreaming(
+                    apiKey: miniMaxAPIKey,
+                    messages: messages,
+                    onContent: onContent
+                )
+            } catch {
+                DebugLogger.shared.logError(error, context: "AI Advisor MiniMax streaming failed")
+                errors.append("MiniMax流式：\(compactChatError(error))")
+            }
 
-        // Include chat history with compression for long conversations
+            do {
+                let content = try await requestMiniMaxNonStreaming(apiKey: miniMaxAPIKey, messages: messages)
+                onContent(content)
+                return content
+            } catch {
+                DebugLogger.shared.logError(error, context: "AI Advisor MiniMax non-streaming failed")
+                errors.append("MiniMax普通：\(compactChatError(error))")
+            }
+        }
+
+        if let qwenAPIKey = APIKeyManager.qwenAPIKey, !qwenAPIKey.isEmpty {
+            do {
+                let content = try await requestQwenAdvisor(apiKey: qwenAPIKey, messages: messages)
+                onContent(content)
+                return content
+            } catch {
+                DebugLogger.shared.logError(error, context: "AI Advisor Qwen failed")
+                errors.append("Qwen：\(compactChatError(error))")
+            }
+        }
+
+        if errors.isEmpty {
+            throw AIServiceError.apiKeyNotConfigured
+        }
+        throw AIServiceError.chatError("AI 顾问请求失败：\(errors.joined(separator: "；"))")
+    }
+
+    private func advisorMessages(for question: String) -> [[String: String]] {
+        let dynamicSummary = summaryForQuestion(question)
         let sortedMessages = chatMessages
             .filter { !$0.content.isEmpty }
             .sorted { $0.createdAt < $1.createdAt }
 
-        let maxRecentMessages = 6  // Keep last 6 messages (3 exchanges) in full
+        let maxRecentMessages = 6
         var historySummary = ""
 
         if sortedMessages.count > maxRecentMessages {
-            // Compress older messages into a summary
             let olderMessages = sortedMessages.prefix(sortedMessages.count - maxRecentMessages)
             historySummary = compressMessages(Array(olderMessages))
         }
 
-        // Build system prompt with optional history summary (single system message)
         var systemPrompt = """
 你是一位亲切友好的营养小助手，像朋友一样和用户聊天。\(currentTimeContext)
 
@@ -621,29 +703,41 @@ struct AIAdvisorView: View {
             ["role": "system", "content": systemPrompt]
         ]
 
-        // Add recent messages
         let recentMessages = sortedMessages.count > maxRecentMessages
             ? Array(sortedMessages.suffix(maxRecentMessages))
             : sortedMessages
 
-        for msg in recentMessages {
-            if msg.role == "user" && msg.content == question { continue }
-            messages.append(["role": msg.role, "content": msg.content])
+        for message in recentMessages {
+            if message.role == "user" && message.content == question { continue }
+            messages.append(["role": message.role, "content": message.content])
         }
 
         messages.append(["role": "user", "content": question])
+        return messages
+    }
 
+    private func requestMiniMaxStreaming(
+        apiKey: String,
+        messages: [[String: String]],
+        onContent: @escaping (String) -> Void
+    ) async throws -> String {
         let requestBody: [String: Any] = [
             "model": "MiniMax-M2.7-highspeed",
             "messages": messages,
-            "stream": true
+            "stream": true,
+            "max_completion_tokens": 512
         ]
 
         var request = URLRequest(url: APIKeyManager.miniMaxEndpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        let bodyData = try JSONSerialization.data(withJSONObject: requestBody)
+        request.httpBody = bodyData
+        DebugLogger.shared.logAPIRequest(
+            endpoint: APIKeyManager.miniMaxEndpoint.absoluteString,
+            body: String(data: bodyData, encoding: .utf8)
+        )
 
         let (bytes, response) = try await URLSession.shared.bytes(for: request)
 
@@ -651,51 +745,198 @@ struct AIAdvisorView: View {
             throw AIServiceError.parsingError("无效响应")
         }
 
-        // Log for debugging
         if !(200...299).contains(httpResponse.statusCode) {
-            // Try to read error body
             var errorBody = ""
             for try await line in bytes.lines {
                 errorBody += line
                 if errorBody.count > 500 { break }
             }
-            throw AIServiceError.chatError("请求失败 (\(httpResponse.statusCode)): \(errorBody.prefix(100))")
+            throw AIServiceError.chatError("请求失败 (\(httpResponse.statusCode)): \(errorBody.prefix(200))")
         }
 
         var accumulatedContent = ""
+        var loggedLineCount = 0
 
         for try await line in bytes.lines {
-            // SSE format: "data: {...}"
-            guard line.hasPrefix("data: ") else { continue }
-            let jsonString = String(line.dropFirst(6))
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmedLine.hasPrefix("data:") else { continue }
 
-            // Skip [DONE] marker
+            let jsonString = String(trimmedLine.dropFirst(5))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             if jsonString == "[DONE]" { break }
 
-            guard let jsonData = jsonString.data(using: .utf8) else { continue }
+            if loggedLineCount < 3 {
+                DebugLogger.shared.log("AI Advisor stream chunk: \(jsonString.prefix(500))")
+                loggedLineCount += 1
+            }
 
-            struct StreamChunk: Decodable {
-                let choices: [Choice]?
-                struct Choice: Decodable {
-                    let delta: Delta
-                    struct Delta: Decodable {
-                        let content: String?
-                    }
+            guard let text = extractResponseText(fromJSONString: jsonString) else { continue }
+            accumulatedContent += text
+            onContent(accumulatedContent)
+        }
+
+        guard !accumulatedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AIServiceError.chatError("AI 返回为空，请重试")
+        }
+
+        return accumulatedContent
+    }
+
+    private func requestMiniMaxNonStreaming(apiKey: String, messages: [[String: String]]) async throws -> String {
+        let requestBody: [String: Any] = [
+            "model": "MiniMax-M2.7-highspeed",
+            "messages": messages,
+            "stream": false,
+            "max_completion_tokens": 512
+        ]
+
+        return try await requestChatCompletion(
+            endpoint: APIKeyManager.miniMaxEndpoint,
+            apiKey: apiKey,
+            requestBody: requestBody,
+            providerName: "MiniMax"
+        )
+    }
+
+    private func requestQwenAdvisor(apiKey: String, messages: [[String: String]]) async throws -> String {
+        let requestBody: [String: Any] = [
+            "model": "qwen-plus",
+            "messages": messages,
+            "temperature": 0.7
+        ]
+
+        return try await requestChatCompletion(
+            endpoint: APIKeyManager.qwenEndpoint,
+            apiKey: apiKey,
+            requestBody: requestBody,
+            providerName: "Qwen"
+        )
+    }
+
+    private func requestDeepSeekAdvisor(apiKey: String, messages: [[String: String]]) async throws -> String {
+        let requestBody: [String: Any] = [
+            "model": "deepseek-v4-flash",
+            "messages": messages,
+            "temperature": 0.7,
+            "stream": false
+        ]
+
+        return try await requestChatCompletion(
+            endpoint: APIKeyManager.deepSeekEndpoint,
+            apiKey: apiKey,
+            requestBody: requestBody,
+            providerName: "DeepSeek"
+        )
+    }
+
+    private func requestChatCompletion(
+        endpoint: URL,
+        apiKey: String,
+        requestBody: [String: Any],
+        providerName: String
+    ) async throws -> String {
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let bodyData = try JSONSerialization.data(withJSONObject: requestBody)
+        request.httpBody = bodyData
+        DebugLogger.shared.logAPIRequest(endpoint: endpoint.absoluteString, body: String(data: bodyData, encoding: .utf8))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIServiceError.invalidResponse
+        }
+        DebugLogger.shared.logAPIResponse(statusCode: httpResponse.statusCode, body: rawString)
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw AIServiceError.chatError("\(providerName)请求失败 (\(httpResponse.statusCode)): \(rawString.prefix(200))")
+        }
+
+        if let errorMessage = extractAPIErrorMessage(fromJSONString: rawString) {
+            throw AIServiceError.chatError("\(providerName)错误：\(errorMessage)")
+        }
+
+        guard let content = extractResponseText(fromJSONString: rawString),
+              !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw AIServiceError.chatError("\(providerName)返回为空: \(rawString.prefix(300))")
+        }
+
+        return content
+    }
+
+    private func extractResponseText(fromJSONString jsonString: String) -> String? {
+        guard let data = jsonString.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        if let choices = object["choices"] as? [[String: Any]],
+           let choice = choices.first {
+            if let delta = choice["delta"] as? [String: Any] {
+                if let content = nonEmptyText(delta["content"]) {
+                    return content
+                }
+                if let text = nonEmptyText(delta["text"]) {
+                    return text
                 }
             }
 
-            if let chunk = try? JSONDecoder().decode(StreamChunk.self, from: jsonData),
-               let content = chunk.choices?.first?.delta.content,
-               !content.isEmpty {
-                accumulatedContent += content
-                onContent(accumulatedContent)
+            if let message = choice["message"] as? [String: Any],
+               let content = nonEmptyText(message["content"]) {
+                return content
+            }
+
+            if let text = nonEmptyText(choice["text"]) {
+                return text
             }
         }
 
-        // If no content was received, throw error
-        if accumulatedContent.isEmpty {
-            throw AIServiceError.chatError("AI 返回为空，请重试")
+        if let outputText = nonEmptyText(object["output_text"]) {
+            return outputText
         }
+        if let reply = nonEmptyText(object["reply"]) {
+            return reply
+        }
+        if let content = nonEmptyText(object["content"]) {
+            return content
+        }
+
+        return nil
+    }
+
+    private func extractAPIErrorMessage(fromJSONString jsonString: String) -> String? {
+        guard let data = jsonString.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+
+        if let error = object["error"] as? [String: Any] {
+            return nonEmptyText(error["message"]) ?? nonEmptyText(error["code"])
+        }
+
+        if let baseResponse = object["base_resp"] as? [String: Any],
+           let statusCode = baseResponse["status_code"] as? Int,
+           statusCode != 0 {
+            return nonEmptyText(baseResponse["status_msg"]) ?? "status_code \(statusCode)"
+        }
+
+        return nil
+    }
+
+    private func nonEmptyText(_ value: Any?) -> String? {
+        guard let text = value as? String else { return nil }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : text
+    }
+
+    private func compactChatError(_ error: Error) -> String {
+        let message = error.localizedDescription
+        if message.count > 120 {
+            return String(message.prefix(120)) + "..."
+        }
+        return message
     }
 
     private func formatDate(_ date: Date) -> String {
@@ -715,20 +956,51 @@ struct MessageRow: View {
     let message: ChatMessage
     let streamingMessageId: UUID?
     let streamingContent: String
+    let canDelete: Bool
+    let onDelete: () -> Void
+
+    private var isStreaming: Bool {
+        message.id == streamingMessageId
+    }
+
+    private var displayContent: String {
+        if message.role == "assistant" && isStreaming && !streamingContent.isEmpty {
+            return streamingContent
+        }
+        return message.content
+    }
 
     var body: some View {
-        if message.role == "user" {
-            UserMessageBubble(content: message.content)
-        } else {
-            let isStreaming = message.id == streamingMessageId
-            let displayContent = (isStreaming && !streamingContent.isEmpty)
-                ? streamingContent
-                : message.content
-
-            if displayContent.isEmpty && isStreaming {
-                TypingIndicatorBubble()
+        Group {
+            if message.role == "user" {
+                UserMessageBubble(content: displayContent)
             } else {
-                AIMessageBubble(content: displayContent)
+                if displayContent.isEmpty && isStreaming {
+                    TypingIndicatorBubble()
+                } else {
+                    AIMessageBubble(content: displayContent)
+                }
+            }
+        }
+        .contextMenu {
+            if !displayContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    UIPasteboard.general.string = displayContent
+                } label: {
+                    Label("拷贝", systemImage: "doc.on.doc")
+                }
+
+                ShareLink(item: displayContent) {
+                    Label("分享", systemImage: "square.and.arrow.up")
+                }
+            }
+
+            if canDelete {
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Label("删除", systemImage: "trash")
+                }
             }
         }
     }
@@ -741,7 +1013,6 @@ struct UserMessageBubble: View {
         HStack {
             Spacer(minLength: 60)
             Text(content)
-                .textSelection(.enabled)
                 .padding(12)
                 .background(Color.blue)
                 .foregroundStyle(.white)
@@ -777,7 +1048,6 @@ struct AIMessageBubble: View {
     var body: some View {
         HStack(alignment: .top) {
             Text(renderedContent)
-                .textSelection(.enabled)
                 .padding(12)
                 .background(Color(.systemGray5))
                 .clipShape(RoundedRectangle(cornerRadius: 16))

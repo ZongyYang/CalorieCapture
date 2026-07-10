@@ -1,7 +1,51 @@
 import Foundation
 
+enum EnergyUnit: String, CaseIterable, Identifiable {
+    case kilocalorie
+    case kilojoule
+
+    var id: Self { self }
+
+    var displayName: String {
+        switch self {
+        case .kilocalorie:
+            return "大卡"
+        case .kilojoule:
+            return "千焦"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .kilocalorie:
+            return "kcal"
+        case .kilojoule:
+            return "kJ"
+        }
+    }
+
+    func toKilocalories(_ value: Double) -> Double {
+        switch self {
+        case .kilocalorie:
+            return value
+        case .kilojoule:
+            return value / 4.184
+        }
+    }
+
+    func fromKilocalories(_ value: Double) -> Double {
+        switch self {
+        case .kilocalorie:
+            return value
+        case .kilojoule:
+            return value * 4.184
+        }
+    }
+}
+
 struct NutritionInfo: Codable {
     let foodName: String
+    let brand: String?
     let grams: Double
     let calories: Double
     let protein: Double
@@ -13,6 +57,7 @@ struct NutritionInfo: Codable {
 
     enum CodingKeys: String, CodingKey {
         case foodName = "food_name"
+        case brand
         case grams, calories, protein, carbohydrates, fat, confidence, notes
         case daysAgo = "days_ago"
     }
@@ -24,10 +69,11 @@ struct NutritionInfo: Codable {
     }
 
     // Custom initializer with default values
-    init(foodName: String, grams: Double, calories: Double, protein: Double,
+    init(foodName: String, brand: String? = nil, grams: Double, calories: Double, protein: Double,
          carbohydrates: Double, fat: Double, confidence: String,
          notes: String? = nil, daysAgo: Int? = 0) {
         self.foodName = foodName
+        self.brand = Self.normalizedOptionalText(brand)
         self.grams = grams
         self.calories = calories
         self.protein = protein
@@ -44,6 +90,7 @@ struct NutritionInfo: Codable {
 
         // Food name - required
         foodName = try container.decode(String.self, forKey: .foodName)
+        brand = Self.normalizedOptionalText(try? container.decode(String.self, forKey: .brand))
 
         // Decode numbers flexibly (handle string or number)
         grams = try Self.decodeFlexibleDouble(from: container, forKey: .grams) ?? 100
@@ -75,5 +122,10 @@ struct NutritionInfo: Codable {
             return Double(stringValue)
         }
         return nil
+    }
+
+    private static func normalizedOptionalText(_ text: String?) -> String? {
+        let trimmedText = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmedText.isEmpty ? nil : trimmedText
     }
 }

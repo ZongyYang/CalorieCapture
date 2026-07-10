@@ -12,6 +12,7 @@ struct HistoryView: View {
     @Query(sort: \WeightEntry.date, order: .reverse) private var weightEntries: [WeightEntry]
 
     @State private var showingAIAdvisor = false
+    @State private var showingAPIKeySetup = false
 
     private var currentGoal: UserGoal? { goals.first }
 
@@ -43,16 +44,29 @@ struct HistoryView: View {
         }.sorted { $0.date > $1.date }
     }
 
-    private var estimatedTDEE: Double {
-        guard let goal = currentGoal, let weight = currentWeight else { return 2000 }
-        return goal.calculateTDEE(currentWeight: weight)
-    }
-
     private var groupedByDay: [(date: Date, entries: [FoodEntry])] {
         let grouped = Dictionary(grouping: allEntries) { entry in
             Calendar.current.startOfDay(for: entry.createdAt)
         }
         return grouped.sorted { $0.key > $1.key }.map { (date: $0.key, entries: $0.value) }
+    }
+
+    private var energyFetchStartDate: Date {
+        let earliestEntryDate = allEntries.map(\.createdAt).min() ?? Date()
+        return Calendar.current.startOfDay(for: earliestEntryDate)
+    }
+
+    private var energyFetchID: String {
+        guard !allEntries.isEmpty else { return "empty" }
+
+        let calendar = Calendar.current
+        let earliestDay = calendar.startOfDay(for: allEntries.map(\.createdAt).min() ?? Date())
+        let latestDay = calendar.startOfDay(for: allEntries.map(\.createdAt).max() ?? Date())
+        return "\(earliestDay.timeIntervalSinceReferenceDate)-\(latestDay.timeIntervalSinceReferenceDate)-\(allEntries.count)"
+    }
+
+    private func energyBurned(for date: Date) -> DailyEnergyBurned? {
+        healthKitService.dailyEnergyBurned[Calendar.current.startOfDay(for: date)]
     }
 
     var body: some View {
@@ -66,13 +80,11 @@ struct HistoryView: View {
             }
             .navigationTitle("历史记录")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    AIAdvisorToolbarButton(isPresented: $showingAIAdvisor)
+                }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showingAIAdvisor = true
-                    } label: {
-                        Image(systemName: "sparkles")
-                        Text("AI顾问")
-                    }
+                    APISettingsToolbarButton(isPresented: $showingAPIKeySetup)
                 }
             }
             .sheet(isPresented: $showingAIAdvisor) {
@@ -83,10 +95,31 @@ struct HistoryView: View {
                     weightHistory: combinedWeightHistory
                 )
             }
-            .task {
-                await healthKitService.requestAuthorization()
+            .sheet(isPresented: $showingAPIKeySetup) {
+                APIKeySetupView()
+            }
+            .task(id: energyFetchID) {
+                await refreshHealthData()
+            }
+            .onAppear {
+                Task {
+                    await refreshHealthData()
+                }
+            }
+            .refreshable {
+                await refreshHealthData()
             }
         }
+    }
+
+    private func refreshHealthData() async {
+        await healthKitService.requestAuthorization()
+
+        guard !allEntries.isEmpty else {
+            return
+        }
+
+        await healthKitService.fetchDailyCaloriesBurned(from: energyFetchStartDate)
     }
 
     private var emptyState: some View {
@@ -108,9 +141,9 @@ struct HistoryView: View {
         List {
             ForEach(groupedByDay, id: \.date) { day in
                 NavigationLink {
-                    DayDetailView(date: day.date, entries: day.entries)
+                    DayDetailView(date: day.date, entries: day.entries, energyBurned: energyBurned(for: day.date))
                 } label: {
-                    DaySummaryRow(date: day.date, entries: day.entries, estimatedTDEE: estimatedTDEE)
+                    DaySummaryRow(date: day.date, entries: day.entries, energyBurned: energyBurned(for: day.date))
                 }
             }
         }
@@ -121,7 +154,7 @@ struct HistoryView: View {
 struct DaySummaryRow: View {
     let date: Date
     let entries: [FoodEntry]
-    var estimatedTDEE: Double = 2000
+    let energyBurned: DailyEnergyBurned?
 
     private var totalCalories: Double {
         entries.reduce(0) { $0 + $1.calories }
@@ -140,12 +173,13 @@ struct DaySummaryRow: View {
     }
 
     // 缺口 = 消耗 - 摄入 (正数表示热量缺口，有利于减重)
-    private var deficit: Double {
-        estimatedTDEE - totalCalories
+    private var deficit: Double? {
+        guard let energyBurned else { return nil }
+        return energyBurned.totalCalories - totalCalories
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(formatDate(date))
                     .font(.headline)
@@ -160,34 +194,45 @@ struct DaySummaryRow: View {
                 HStack(spacing: 4) {
                     Image(systemName: "fork.knife")
                         .foregroundStyle(.orange)
-                    Text("\(Int(totalCalories))")
+                    Text("摄入\(Int(totalCalories))")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                }
+
+                // 消耗
+                HStack(spacing: 4) {
+                    Image(systemName: "flame.fill")
+                        .foregroundStyle(.red)
+                    Text("消耗\(energyBurned.map { Int($0.totalCalories).description } ?? "--")")
                         .font(.subheadline)
                         .fontWeight(.medium)
                 }
 
                 // 缺口/超出
-                HStack(spacing: 4) {
-                    Image(systemName: deficit >= 0 ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
-                        .foregroundStyle(deficit >= 0 ? .green : .red)
-                    Text(deficit >= 0 ? "缺口\(Int(deficit))" : "超出\(Int(abs(deficit)))")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                        .foregroundColor(deficit >= 0 ? .green : .red)
+                if let deficit {
+                    HStack(spacing: 4) {
+                        Image(systemName: deficit >= 0 ? "arrow.down.circle.fill" : "arrow.up.circle.fill")
+                            .foregroundStyle(deficit >= 0 ? .green : .red)
+                        Text(deficit >= 0 ? "缺口\(Int(deficit))" : "超出\(Int(abs(deficit)))")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(deficit >= 0 ? .green : .red)
+                    }
                 }
 
                 Spacer()
+            }
 
-                HStack(spacing: 6) {
-                    Text("蛋白\(totalProtein.formattedGrams)g")
-                        .font(.caption2)
-                        .foregroundStyle(.red)
-                    Text("碳水\(totalCarbs.formattedGrams)g")
-                        .font(.caption2)
-                        .foregroundStyle(.blue)
-                    Text("脂肪\(totalFat.formattedGrams)g")
-                        .font(.caption2)
-                        .foregroundStyle(.yellow)
-                }
+            HStack(spacing: 6) {
+                Text("蛋白\(totalProtein.formattedGrams)g")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+                Text("碳水\(totalCarbs.formattedGrams)g")
+                    .font(.caption2)
+                    .foregroundStyle(.blue)
+                Text("脂肪\(totalFat.formattedGrams)g")
+                    .font(.caption2)
+                    .foregroundStyle(.yellow)
             }
         }
         .padding(.vertical, 4)

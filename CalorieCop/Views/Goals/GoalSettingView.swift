@@ -4,15 +4,28 @@ import SwiftData
 struct GoalSettingView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var healthKitService = HealthKitService()
     @Query private var goals: [UserGoal]
     @Query private var settings: [UserSettings]
     @Query(sort: \WeightEntry.date, order: .reverse) private var weightEntries: [WeightEntry]
 
     // Current weight passed from parent or from weight entries
     var passedCurrentWeight: Double?
+    var passedAverageDailyCaloriesBurned: Double?
+    var passedAverageDailyCaloriesBurnedDays: Int = 0
 
     private var currentWeight: Double? {
         passedCurrentWeight ?? weightEntries.first?.weight
+    }
+
+    private var averageDailyCaloriesBurned: Double? {
+        healthKitService.recentAverageCaloriesBurned ?? passedAverageDailyCaloriesBurned
+    }
+
+    private var averageDailyCaloriesBurnedDays: Int {
+        healthKitService.recentAverageCaloriesBurnedDays > 0
+            ? healthKitService.recentAverageCaloriesBurnedDays
+            : passedAverageDailyCaloriesBurnedDays
     }
 
     @State private var targetWeight: Double = 65  // Input value in user's preferred unit
@@ -20,6 +33,7 @@ struct GoalSettingView: View {
     @State private var age: Int = 30
     @State private var gender: String = "male"
     @State private var activityLevel: String = "moderate"
+    @State private var dailyCalorieDeficit: Double = 500
     @State private var hasTargetDate: Bool = false
     @State private var targetDate: Date = Date().addingTimeInterval(86400 * 90)
     @State private var initialized = false
@@ -110,6 +124,23 @@ struct GoalSettingView: View {
                 }
 
                 Section {
+                    HStack {
+                        Text("每日热量缺口")
+                        Spacer()
+                        TextField("kcal", value: $dailyCalorieDeficit, format: .number)
+                            .keyboardType(.numberPad)
+                            .multilineTextAlignment(.trailing)
+                            .frame(width: 80)
+                        Text("kcal")
+                            .foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("热量目标")
+                } footer: {
+                    Text("推荐摄入 = 每日消耗 - 热量缺口。每日消耗优先使用 HealthKit 最近完整日期的平均总消耗。")
+                }
+
+                Section {
                     calorieRecommendation
                 }
 
@@ -133,6 +164,10 @@ struct GoalSettingView: View {
             .onAppear {
                 loadExistingGoal()
             }
+            .task {
+                await healthKitService.requestAuthorization()
+                await healthKitService.fetchRecentAverageCaloriesBurned()
+            }
         }
     }
 
@@ -151,14 +186,19 @@ struct GoalSettingView: View {
                 age: age,
                 gender: gender,
                 activityLevel: activityLevel,
-                targetDate: hasTargetDate ? targetDate : nil
+                targetDate: hasTargetDate ? targetDate : nil,
+                dailyCalorieDeficit: max(dailyCalorieDeficit, 0)
             )
 
             // Use actual current weight if available, otherwise estimate
             let weightForCalc = currentWeight ?? (targetWeightInKg + 5)
             let isEstimated = currentWeight == nil
-            let recommended = goal.recommendedDailyCalories(currentWeight: weightForCalc)
-            let tdee = goal.calculateTDEE(currentWeight: weightForCalc)
+            let estimatedTDEE = goal.calculateTDEE(currentWeight: weightForCalc)
+            let dailyExpenditure = averageDailyCaloriesBurned ?? estimatedTDEE
+            let recommended = goal.recommendedDailyCalories(
+                currentWeight: weightForCalc,
+                dailyEnergyExpenditure: dailyExpenditure
+            )
 
             HStack {
                 VStack {
@@ -174,7 +214,7 @@ struct GoalSettingView: View {
                 Spacer()
 
                 VStack {
-                    Text("\(Int(tdee))")
+                    Text("\(Int(dailyExpenditure))")
                         .font(.title)
                         .fontWeight(.bold)
                         .foregroundStyle(.orange)
@@ -186,7 +226,7 @@ struct GoalSettingView: View {
                 Spacer()
 
                 VStack {
-                    Text("\(Int(tdee - recommended))")
+                    Text("\(Int(goal.plannedDailyDeficit(currentWeight: weightForCalc)))")
                         .font(.title)
                         .fontWeight(.bold)
                         .foregroundStyle(.blue)
@@ -205,6 +245,22 @@ struct GoalSettingView: View {
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
+
+            if averageDailyCaloriesBurned != nil {
+                Text("* 每日消耗使用 HealthKit 最近 \(averageDailyCaloriesBurnedDays) 个完整日平均总消耗")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            } else {
+                Text("* 暂无 HealthKit 平均消耗数据，每日消耗暂用身体信息和活动水平估算")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            if recommended <= 1200 {
+                Text("* 推荐摄入低于 1200 kcal 时会按 1200 kcal 显示")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
@@ -221,6 +277,8 @@ struct GoalSettingView: View {
             age = goal.age
             gender = goal.gender
             activityLevel = goal.activityLevel
+            let weightForCalc = currentWeight ?? (goal.targetWeight + 5)
+            dailyCalorieDeficit = goal.plannedDailyDeficit(currentWeight: weightForCalc)
             if let date = goal.targetDate {
                 hasTargetDate = true
                 targetDate = date
@@ -244,6 +302,7 @@ struct GoalSettingView: View {
             existing.age = age
             existing.gender = gender
             existing.activityLevel = activityLevel
+            existing.dailyCalorieDeficit = max(dailyCalorieDeficit, 0)
             existing.targetDate = hasTargetDate ? targetDate : nil
             existing.updatedAt = Date()
         } else {
@@ -254,7 +313,8 @@ struct GoalSettingView: View {
                 age: age,
                 gender: gender,
                 activityLevel: activityLevel,
-                targetDate: hasTargetDate ? targetDate : nil
+                targetDate: hasTargetDate ? targetDate : nil,
+                dailyCalorieDeficit: max(dailyCalorieDeficit, 0)
             )
             modelContext.insert(goal)
         }

@@ -18,7 +18,7 @@ enum AIServiceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .apiKeyNotConfigured:
-            return "API key not configured. Please set up your API keys in Secrets.swift."
+            return "未配置 API 密钥。请在应用内设置 DeepSeek、MiniMax 或 Qwen API 密钥。"
         case .invalidResponse:
             return "Invalid response from AI service."
         case .networkError(let error):

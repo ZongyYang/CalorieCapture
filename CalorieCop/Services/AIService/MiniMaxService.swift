@@ -4,9 +4,13 @@ import UIKit
 final class MiniMaxService: AIServiceProtocol {
     // Endpoints are now dynamic based on user's region setting
     private var endpoint: URL { APIKeyManager.miniMaxEndpoint }
+    private var deepSeekEndpoint: URL { APIKeyManager.deepSeekEndpoint }
     private var qwenEndpoint: URL { APIKeyManager.qwenEndpoint }
     // MiniMax-M2.7-highspeed for text parsing
-    private let model = "MiniMax-M2.7-highspeed"
+    private let miniMaxTextModel = "MiniMax-M2.7-highspeed"
+    private let deepSeekTextModel = "deepseek-v4-flash"
+    private let qwenTextModel = "qwen-plus"
+    private let qwenVisionModel = "qwen3-vl-plus"
     private let logger = DebugLogger.shared
 
     func parseFoodInput(_ input: String) async throws -> NutritionInfo {
@@ -23,21 +27,60 @@ final class MiniMaxService: AIServiceProtocol {
     }
 
     func parseFoodInputMultiple(_ input: String, preferences: [FoodPreference]) async throws -> [NutritionInfo] {
-        guard let apiKey = APIKeyManager.miniMaxAPIKey, !apiKey.isEmpty else {
+        let trimmedInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInput.isEmpty else {
+            throw AIServiceError.parsingError("请输入食物描述")
+        }
+
+        guard APIKeyManager.isDeepSeekConfigured || APIKeyManager.isMiniMaxConfigured || APIKeyManager.isQwenConfigured else {
             throw AIServiceError.apiKeyNotConfigured
         }
 
         let systemPrompt = FoodParsingPrompt.systemPrompt(with: preferences)
+        var parseErrors: [String] = []
 
-        let requestBody = MiniMaxRequest(
-            model: model,
-            messages: [
-                Message(role: "system", content: .text(systemPrompt)),
-                Message(role: "user", content: .text(input))
-            ]
-        )
+        if APIKeyManager.isDeepSeekConfigured {
+            do {
+                return try await parseFoodTextWithDeepSeek(trimmedInput, systemPrompt: systemPrompt)
+            } catch {
+                logger.logError(error, context: "DeepSeek text parsing failed, trying MiniMax fallback")
+                parseErrors.append("DeepSeek：\(compactError(error))")
+            }
+        } else {
+            parseErrors.append("DeepSeek：未配置")
+        }
 
-        return try await sendRequestMultiple(requestBody)
+        if APIKeyManager.isMiniMaxConfigured {
+            let requestBody = MiniMaxRequest(
+                model: miniMaxTextModel,
+                messages: [
+                    Message(role: "system", content: .text(systemPrompt)),
+                    Message(role: "user", content: .text(trimmedInput))
+                ]
+            )
+
+            do {
+                return try await sendRequestMultiple(requestBody)
+            } catch {
+                logger.logError(error, context: "MiniMax text parsing failed, trying Qwen fallback")
+                parseErrors.append("MiniMax：\(compactError(error))")
+            }
+        } else {
+            parseErrors.append("MiniMax：未配置")
+        }
+
+        if APIKeyManager.isQwenConfigured {
+            do {
+                return try await parseFoodTextWithQwen(trimmedInput, systemPrompt: systemPrompt)
+            } catch {
+                logger.logError(error, context: "Qwen text parsing failed")
+                parseErrors.append("Qwen：\(compactError(error))")
+            }
+        } else {
+            parseErrors.append("Qwen：未配置")
+        }
+
+        throw AIServiceError.parsingError("文字解析失败。\n\(parseErrors.joined(separator: "\n"))")
     }
 
     func parseFoodImage(_ image: UIImage, additionalContext: String? = nil, preferences: [FoodPreference] = []) async throws -> NutritionInfo {
@@ -72,14 +115,16 @@ final class MiniMaxService: AIServiceProtocol {
 
         // Build Qwen VL Plus request (OpenAI-compatible format)
         let requestBody: [String: Any] = [
-            "model": "qwen-vl-plus",
+            "model": qwenVisionModel,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": [
                     ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64String)"]],
                     ["type": "text", "text": userPrompt]
                 ]]
-            ]
+            ],
+            "temperature": 0.1,
+            "stream": false
         ]
 
         // Use dynamic endpoint based on user's region setting
@@ -88,6 +133,7 @@ final class MiniMaxService: AIServiceProtocol {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        logger.logAPIRequest(endpoint: qwenEndpoint.absoluteString, body: "model=\(qwenVisionModel), imageBytes=\(imageData.count)")
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -138,31 +184,154 @@ final class MiniMaxService: AIServiceProtocol {
             throw AIServiceError.parsingError("Qwen返回为空: \(rawString.prefix(300))")
         }
 
-        let jsonString = extractJSON(from: content)
-        logger.log("Image parsing extracted JSON: \(jsonString)")
+        return try decodeNutritionList(from: content, context: "Qwen image")
+    }
 
-        guard let contentData = jsonString.data(using: .utf8) else {
-            throw AIServiceError.parsingError("Failed to convert content to data")
+    private func parseFoodTextWithQwen(_ input: String, systemPrompt: String) async throws -> [NutritionInfo] {
+        guard let apiKey = APIKeyManager.qwenAPIKey, !apiKey.isEmpty else {
+            throw AIServiceError.apiKeyNotConfigured
         }
 
-        // Try to decode as array first
-        do {
-            let nutritionArray = try JSONDecoder().decode([NutritionInfo].self, from: contentData)
-            return nutritionArray
-        } catch {
-            // Fallback: try single object and wrap in array
-            do {
-                let nutritionInfo = try JSONDecoder().decode(NutritionInfo.self, from: contentData)
-                return [nutritionInfo]
-            } catch {
-                logger.logError(error, context: "Image nutrition decode. JSON: \(jsonString)")
-                throw AIServiceError.parsingError("图片解析失败: \(jsonString.prefix(200))")
+        let requestBody: [String: Any] = [
+            "model": qwenTextModel,
+            "messages": [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": input]
+            ],
+            "temperature": 0.1
+        ]
+
+        var request = URLRequest(url: qwenEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let bodyData = try JSONSerialization.data(withJSONObject: requestBody)
+        request.httpBody = bodyData
+        logger.logAPIRequest(endpoint: qwenEndpoint.absoluteString, body: String(data: bodyData, encoding: .utf8))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIServiceError.invalidResponse
+        }
+
+        let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
+        logger.logAPIResponse(statusCode: httpResponse.statusCode, body: rawString)
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw AIServiceError.parsingError("Qwen API Error (\(httpResponse.statusCode)): \(rawString.prefix(300))")
+        }
+
+        struct QwenTextResponse: Decodable {
+            let choices: [Choice]?
+            let error: QwenError?
+
+            struct Choice: Decodable {
+                let message: Message
+                struct Message: Decodable {
+                    let content: String
+                }
+            }
+
+            struct QwenError: Decodable {
+                let message: String?
+                let code: String?
             }
         }
+
+        let qwenResponse: QwenTextResponse
+        do {
+            qwenResponse = try JSONDecoder().decode(QwenTextResponse.self, from: data)
+        } catch {
+            logger.logError(error, context: "Qwen text response decode")
+            throw AIServiceError.parsingError("Qwen响应格式错误: \(rawString.prefix(300))")
+        }
+
+        if let error = qwenResponse.error {
+            throw AIServiceError.parsingError("Qwen错误: \(error.message ?? error.code ?? "未知错误")")
+        }
+
+        guard let content = qwenResponse.choices?.first?.message.content else {
+            throw AIServiceError.parsingError("Qwen返回为空: \(rawString.prefix(300))")
+        }
+
+        return try decodeNutritionList(from: content, context: "Qwen text")
+    }
+
+    private func parseFoodTextWithDeepSeek(_ input: String, systemPrompt: String) async throws -> [NutritionInfo] {
+        guard let apiKey = APIKeyManager.deepSeekAPIKey, !apiKey.isEmpty else {
+            throw AIServiceError.apiKeyNotConfigured
+        }
+
+        let requestBody: [String: Any] = [
+            "model": deepSeekTextModel,
+            "messages": [
+                ["role": "system", "content": systemPrompt],
+                ["role": "user", "content": input]
+            ],
+            "temperature": 0.1,
+            "stream": false
+        ]
+
+        var request = URLRequest(url: deepSeekEndpoint)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let bodyData = try JSONSerialization.data(withJSONObject: requestBody)
+        request.httpBody = bodyData
+        logger.logAPIRequest(endpoint: deepSeekEndpoint.absoluteString, body: String(data: bodyData, encoding: .utf8))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw AIServiceError.invalidResponse
+        }
+
+        let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
+        logger.logAPIResponse(statusCode: httpResponse.statusCode, body: rawString)
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            throw AIServiceError.parsingError("DeepSeek API Error (\(httpResponse.statusCode)): \(rawString.prefix(300))")
+        }
+
+        struct DeepSeekTextResponse: Decodable {
+            let choices: [Choice]?
+            let error: DeepSeekError?
+
+            struct Choice: Decodable {
+                let message: Message
+                struct Message: Decodable {
+                    let content: String
+                }
+            }
+
+            struct DeepSeekError: Decodable {
+                let message: String?
+                let code: String?
+            }
+        }
+
+        let deepSeekResponse: DeepSeekTextResponse
+        do {
+            deepSeekResponse = try JSONDecoder().decode(DeepSeekTextResponse.self, from: data)
+        } catch {
+            logger.logError(error, context: "DeepSeek text response decode")
+            throw AIServiceError.parsingError("DeepSeek响应格式错误: \(rawString.prefix(300))")
+        }
+
+        if let error = deepSeekResponse.error {
+            throw AIServiceError.parsingError("DeepSeek错误: \(error.message ?? error.code ?? "未知错误")")
+        }
+
+        guard let content = deepSeekResponse.choices?.first?.message.content else {
+            throw AIServiceError.parsingError("DeepSeek返回为空: \(rawString.prefix(300))")
+        }
+
+        return try decodeNutritionList(from: content, context: "DeepSeek text")
     }
 
     private func sendRequestMultiple(_ requestBody: MiniMaxRequest) async throws -> [NutritionInfo] {
-        guard let apiKey = APIKeyManager.miniMaxAPIKey else {
+        guard let apiKey = APIKeyManager.miniMaxAPIKey, !apiKey.isEmpty else {
             throw AIServiceError.apiKeyNotConfigured
         }
 
@@ -170,7 +339,9 @@ final class MiniMaxService: AIServiceProtocol {
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONEncoder().encode(requestBody)
+        let bodyData = try JSONEncoder().encode(requestBody)
+        request.httpBody = bodyData
+        logger.logAPIRequest(endpoint: endpoint.absoluteString, body: String(data: bodyData, encoding: .utf8))
 
         let (data, response) = try await URLSession.shared.data(for: request)
 
@@ -194,9 +365,9 @@ final class MiniMaxService: AIServiceProtocol {
             throw AIServiceError.parsingError("API响应格式错误: \(rawString.prefix(300))")
         }
 
-        if let apiError = miniMaxResponse.error {
-            logger.log("API returned error: \(apiError.message ?? apiError.code ?? "unknown")")
-            throw AIServiceError.parsingError("API错误: \(apiError.message ?? apiError.code ?? "未知错误")")
+        if let errorMessage = miniMaxResponse.errorMessage {
+            logger.log("API returned error: \(errorMessage)")
+            throw AIServiceError.parsingError("API错误: \(errorMessage)")
         }
 
         guard let content = miniMaxResponse.firstContent else {
@@ -204,28 +375,7 @@ final class MiniMaxService: AIServiceProtocol {
             throw AIServiceError.parsingError("API返回为空: \(rawString.prefix(300))")
         }
 
-        let jsonString = extractJSON(from: content)
-        logger.log("Extracted JSON (multiple): \(jsonString)")
-
-        guard let contentData = jsonString.data(using: .utf8) else {
-            throw AIServiceError.parsingError("无法转换内容")
-        }
-
-        // Try to decode as array first
-        do {
-            let nutritionInfoArray = try JSONDecoder().decode([NutritionInfo].self, from: contentData)
-            return nutritionInfoArray
-        } catch {
-            // If array parsing fails, try single object and wrap in array
-            logger.log("Array decode failed, trying single object: \(error)")
-            do {
-                let nutritionInfo = try JSONDecoder().decode(NutritionInfo.self, from: contentData)
-                return [nutritionInfo]
-            } catch {
-                logger.logError(error, context: "NutritionInfo decode. JSON: \(jsonString)")
-                throw AIServiceError.parsingError("营养信息解析失败: \(jsonString.prefix(200))")
-            }
-        }
+        return try decodeNutritionList(from: content, context: "MiniMax text")
     }
 
     private func sendRequest(_ requestBody: MiniMaxRequest) async throws -> NutritionInfo {
@@ -261,9 +411,9 @@ final class MiniMaxService: AIServiceProtocol {
             throw AIServiceError.parsingError("API响应格式错误: \(rawString.prefix(300))")
         }
 
-        if let apiError = miniMaxResponse.error {
-            logger.log("API returned error: \(apiError.message ?? apiError.code ?? "unknown")")
-            throw AIServiceError.parsingError("API错误: \(apiError.message ?? apiError.code ?? "未知错误")")
+        if let errorMessage = miniMaxResponse.errorMessage {
+            logger.log("API returned error: \(errorMessage)")
+            throw AIServiceError.parsingError("API错误: \(errorMessage)")
         }
 
         guard let content = miniMaxResponse.firstContent else {
@@ -312,6 +462,35 @@ final class MiniMaxService: AIServiceProtocol {
         }
 
         return cleaned
+    }
+
+    private func decodeNutritionList(from content: String, context: String) throws -> [NutritionInfo] {
+        let jsonString = extractJSON(from: content)
+        logger.log("\(context) extracted JSON: \(jsonString)")
+
+        guard let contentData = jsonString.data(using: .utf8) else {
+            throw AIServiceError.parsingError("无法转换内容")
+        }
+
+        do {
+            return try JSONDecoder().decode([NutritionInfo].self, from: contentData)
+        } catch {
+            logger.log("Array decode failed for \(context), trying single object: \(error)")
+            do {
+                let nutritionInfo = try JSONDecoder().decode(NutritionInfo.self, from: contentData)
+                return [nutritionInfo]
+            } catch {
+                logger.logError(error, context: "\(context) nutrition decode. JSON: \(jsonString)")
+                throw AIServiceError.parsingError("营养信息解析失败: \(jsonString.prefix(200))")
+            }
+        }
+    }
+
+    private func compactError(_ error: Error) -> String {
+        let message = error.localizedDescription
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(message.prefix(220))
     }
 
     private func convertYAMLToJSON(_ yaml: String) -> String {
@@ -490,16 +669,45 @@ private struct TextContent: Encodable {
 private struct MiniMaxResponse: Decodable {
     let choices: [Choice]?
     let error: MiniMaxError?
+    let baseResp: MiniMaxBaseResponse?
+
+    enum CodingKeys: String, CodingKey {
+        case choices
+        case error
+        case baseResp = "base_resp"
+    }
 
     // Handle both possible response structures
     var firstContent: String? {
         choices?.first?.message.content
+    }
+
+    var errorMessage: String? {
+        if let error {
+            return error.message ?? error.code ?? "未知错误"
+        }
+
+        if let baseResp, baseResp.statusCode != 0 {
+            return baseResp.statusMessage ?? "status_code \(baseResp.statusCode)"
+        }
+
+        return nil
     }
 }
 
 private struct MiniMaxError: Decodable {
     let message: String?
     let code: String?
+}
+
+private struct MiniMaxBaseResponse: Decodable {
+    let statusCode: Int
+    let statusMessage: String?
+
+    enum CodingKeys: String, CodingKey {
+        case statusCode = "status_code"
+        case statusMessage = "status_msg"
+    }
 }
 
 private struct Choice: Decodable {

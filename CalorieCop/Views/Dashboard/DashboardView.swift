@@ -11,12 +11,13 @@ struct DashboardView: View {
     @Query private var goals: [UserGoal]
     @Query(sort: \WeightEntry.date, order: .reverse) private var manualWeightEntries: [WeightEntry]
 
-    @State private var useAppleWatchData = true
     @State private var goalRefreshTrigger = UUID()
+    @State private var showingAIAdvisor = false
+    @State private var showingAPIKeySetup = false
 
     private var currentGoal: UserGoal? { goals.first }
 
-    private var hasAppleWatchData: Bool {
+    private var hasHealthKitCalories: Bool {
         healthKitService.totalCaloriesBurned > 0
     }
 
@@ -47,45 +48,43 @@ struct DashboardView: View {
         return latestHealthKit ?? latestManual
     }
 
-    private var calculatedTDEE: Double? {
-        guard let goal = currentGoal, let weight = currentWeight else { return nil }
-        return goal.calculateTDEE(currentWeight: weight)
+    private var combinedWeightHistory: [WeightRecord] {
+        var records = healthKitService.dailyWeights
+        records.append(contentsOf: manualWeightEntries.map { WeightRecord(date: $0.date, weight: $0.weight) })
+
+        let grouped = Dictionary(grouping: records) { record in
+            Calendar.current.startOfDay(for: record.date)
+        }
+
+        return grouped.map { (_, records) in
+            records.first!
+        }.sorted { $0.date > $1.date }
     }
 
     private var totalCaloriesBurned: Double {
-        if useAppleWatchData && hasAppleWatchData {
-            guard let goal = currentGoal, let weight = currentWeight else {
-                return healthKitService.totalCaloriesBurned
-            }
-            let bmr = goal.calculateBMR(currentWeight: weight)
-            return bmr + healthKitService.activeCaloriesBurned
-        }
-        return calculatedTDEE ?? healthKitService.totalCaloriesBurned
+        healthKitService.totalCaloriesBurned
+    }
+
+    private var restingCalories: Double {
+        healthKitService.basalCaloriesBurned
     }
 
     private var activeCalories: Double {
-        guard let goal = currentGoal, let weight = currentWeight else { return 0 }
-        if useAppleWatchData && hasAppleWatchData {
-            return healthKitService.activeCaloriesBurned
-        }
-        return goal.calculateTDEE(currentWeight: weight) - goal.calculateBMR(currentWeight: weight)
-    }
-
-    private var isShowingEstimated: Bool {
-        !useAppleWatchData || !hasAppleWatchData
+        healthKitService.activeCaloriesBurned
     }
 
     private var recommendedCalories: Double? {
         guard let goal = currentGoal, let weight = currentWeight else { return nil }
-        return goal.recommendedDailyCalories(currentWeight: weight)
+        return goal.recommendedDailyCalories(
+            currentWeight: weight,
+            dailyEnergyExpenditure: healthKitService.recentAverageCaloriesBurned
+        )
     }
 
-    // Target deficit = TDEE - recommended (the planned daily deficit to reach weight goal)
+    // Target deficit is user-defined in goal settings. Existing goals fall back to the previous automatic value.
     private var targetDeficit: Double? {
         guard let goal = currentGoal, let weight = currentWeight else { return nil }
-        let tdee = goal.calculateTDEE(currentWeight: weight)
-        let recommended = goal.recommendedDailyCalories(currentWeight: weight)
-        return tdee - recommended
+        return goal.plannedDailyDeficit(currentWeight: weight)
     }
 
     var body: some View {
@@ -94,9 +93,7 @@ struct DashboardView: View {
                 VStack(spacing: 20) {
                     calorieBalanceSection
 
-                    if let goal = currentGoal, let weight = currentWeight {
-                        metabolismCard(goal: goal, weight: weight)
-                    }
+                    metabolismCard
 
                     macroNutrientsSection
 
@@ -107,30 +104,31 @@ struct DashboardView: View {
             .background(Color(.systemGroupedBackground))
             .navigationTitle("今日概览")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        useAppleWatchData.toggle()
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: useAppleWatchData ? "applewatch" : "function")
-                                .font(.caption)
-                            Text(useAppleWatchData ? "实时" : "估算")
-                                .font(.caption)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(useAppleWatchData ? Color.green.opacity(0.2) : Color.orange.opacity(0.2))
-                        .clipShape(Capsule())
-                    }
-                    .disabled(!hasAppleWatchData)
-                    .opacity(hasAppleWatchData ? 1 : 0.5)
+                ToolbarItem(placement: .topBarLeading) {
+                    AIAdvisorToolbarButton(isPresented: $showingAIAdvisor)
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    APISettingsToolbarButton(isPresented: $showingAPIKeySetup)
+                }
+            }
+            .sheet(isPresented: $showingAIAdvisor) {
+                AIAdvisorView(
+                    foodEntries: allEntries,
+                    userGoal: currentGoal,
+                    currentWeight: currentWeight,
+                    weightHistory: combinedWeightHistory
+                )
+            }
+            .sheet(isPresented: $showingAPIKeySetup) {
+                APIKeySetupView()
             }
             .task {
                 await healthKitService.requestAuthorization()
+                await healthKitService.fetchRecentAverageCaloriesBurned()
             }
             .refreshable {
                 await healthKitService.fetchTodayCaloriesBurned()
+                await healthKitService.fetchRecentAverageCaloriesBurned()
             }
             .onChange(of: currentGoal?.targetDate) {
                 goalRefreshTrigger = UUID()
@@ -148,21 +146,21 @@ struct DashboardView: View {
                 burned: totalCaloriesBurned,
                 targetDeficit: targetDeficit
             )
-            .id("\(goalRefreshTrigger)-\(useAppleWatchData)")
+            .id(goalRefreshTrigger)
 
-            if isShowingEstimated {
-                Text("基于身体数据估算消耗")
+            if hasHealthKitCalories {
+                Text("来自健康 App 今日能量数据")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             } else {
-                Text("来自 Apple Watch 实时数据")
+                Text("暂无健康 App 今日能量数据")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    private func metabolismCard(goal: UserGoal, weight: Double) -> some View {
+    private var metabolismCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("今日消耗明细")
                 .font(.headline)
@@ -173,10 +171,10 @@ struct DashboardView: View {
                     Image(systemName: "bed.double.fill")
                         .font(.title2)
                         .foregroundStyle(.purple)
-                    Text("\(Int(goal.calculateBMR(currentWeight: weight)))")
+                    Text("\(Int(restingCalories))")
                         .font(.title3)
                         .fontWeight(.bold)
-                    Text("基础代谢")
+                    Text("静息能量")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -184,19 +182,19 @@ struct DashboardView: View {
 
                 // Activity calories
                 VStack(spacing: 4) {
-                    Image(systemName: isShowingEstimated ? "figure.walk" : "applewatch")
+                    Image(systemName: "applewatch")
                         .font(.title2)
                         .foregroundStyle(.green)
                     Text("\(Int(activeCalories))")
                         .font(.title3)
                         .fontWeight(.bold)
-                    Text(isShowingEstimated ? "活动消耗(估)" : "活动消耗")
+                    Text("活动能量")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
 
-                // Total TDEE
+                // Total calories burned
                 VStack(spacing: 4) {
                     Image(systemName: "flame.fill")
                         .font(.title2)
