@@ -3,7 +3,8 @@ import SwiftData
 
 /// Service to migrate data from the old app (com.example.CalorieCop) to the new bundle ID
 enum DataMigrationService {
-    private static let migrationCompletedKey = "data_migration_completed_v1"
+    // v2 imports the July 14 backup into the new bundle-ID sandbox.
+    private static let migrationCompletedKey = "data_migration_completed_v2_20260714"
 
     static var hasMigrated: Bool {
         UserDefaults.standard.bool(forKey: migrationCompletedKey)

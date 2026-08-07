@@ -10,7 +10,8 @@ struct GoalsView: View {
     @Query(sort: \WeightEntry.date, order: .reverse) private var manualWeightEntries: [WeightEntry]
     @Query private var settings: [UserSettings]
 
-    @State private var showingGoalSettings = false
+    @State private var showingAIAdvisor = false
+    @State private var showingSettings = false
     @State private var showingWeightEntry = false
     private let calorieStatsDays = 14
 
@@ -110,11 +111,30 @@ struct GoalsView: View {
         }
     }
 
+    private var dailyNutritionStats: [DailyNutritionStat] {
+        let calendar = Calendar.current
+        let entriesByDay = Dictionary(grouping: allEntries) { entry in
+            calendar.startOfDay(for: entry.createdAt)
+        }
+
+        return dailyCalorieStats.map { calorieStat in
+            let entries = entriesByDay[calorieStat.date] ?? []
+            return DailyNutritionStat(
+                date: calorieStat.date,
+                protein: entries.reduce(0) { $0 + $1.protein },
+                carbohydrates: entries.reduce(0) { $0 + $1.carbohydrates },
+                fat: entries.reduce(0) { $0 + $1.fat }
+            )
+        }
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     DailyCalorieStatsChartView(stats: dailyCalorieStats)
+
+                    DailyNutritionStatsChartView(stats: dailyNutritionStats)
 
                     // Weight Chart
                     WeightChartView(
@@ -132,59 +152,27 @@ struct GoalsView: View {
                 }
                 .padding()
             }
-            .background(Color(.systemGroupedBackground))
+            .background(AppSurfaceStyle.pageBackground)
             .navigationTitle("统计")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    Button {
-                        showingWeightEntry = true
-                    } label: {
-                        Image(systemName: "plus.circle")
-                        Text("记录体重")
-                    }
-                    .font(.caption)
+                    AIAdvisorToolbarButton(isPresented: $showingAIAdvisor)
                 }
 
                 ToolbarItem(placement: .topBarTrailing) {
-                    HStack(spacing: 12) {
-                        // Weight unit toggle
-                        Menu {
-                            ForEach(WeightUnit.allCases, id: \.self) { unit in
-                                Button {
-                                    setWeightUnit(unit)
-                                } label: {
-                                    HStack {
-                                        Text(unit.displayName)
-                                        if unit == weightUnit {
-                                            Image(systemName: "checkmark")
-                                        }
-                                    }
-                                }
-                            }
-                        } label: {
-                            Text(weightUnit.shortName)
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(Color.blue.opacity(0.15))
-                                .clipShape(Capsule())
-                        }
-
-                        Button {
-                            showingGoalSettings = true
-                        } label: {
-                            Image(systemName: "gearshape")
-                        }
-                    }
+                    AppSettingsToolbarButton(isPresented: $showingSettings)
                 }
             }
-            .sheet(isPresented: $showingGoalSettings) {
-                GoalSettingView(
-                    passedCurrentWeight: currentWeight,
-                    passedAverageDailyCaloriesBurned: healthKitService.recentAverageCaloriesBurned,
-                    passedAverageDailyCaloriesBurnedDays: healthKitService.recentAverageCaloriesBurnedDays
+            .sheet(isPresented: $showingAIAdvisor) {
+                AIAdvisorView(
+                    foodEntries: allEntries,
+                    userGoal: currentGoal,
+                    currentWeight: currentWeight,
+                    weightHistory: combinedWeightHistory
                 )
+            }
+            .sheet(isPresented: $showingSettings) {
+                AppSettingsView()
             }
             .sheet(isPresented: $showingWeightEntry) {
                 ManualWeightEntryView()
@@ -226,13 +214,13 @@ struct GoalsView: View {
                 .multilineTextAlignment(.center)
 
             Button("设置目标") {
-                showingGoalSettings = true
+                showingSettings = true
             }
             .buttonStyle(.borderedProminent)
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
@@ -308,9 +296,211 @@ struct GoalsView: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
+}
+
+private struct DailyNutritionStat: Identifiable {
+    let date: Date
+    let protein: Double
+    let carbohydrates: Double
+    let fat: Double
+
+    var id: Date { date }
+
+    var hasAnyData: Bool {
+        protein > 0 || carbohydrates > 0 || fat > 0
+    }
+}
+
+private struct DailyNutritionStatsChartView: View {
+    let stats: [DailyNutritionStat]
+    @State private var scrollPosition: Date
+
+    init(stats: [DailyNutritionStat]) {
+        self.stats = stats
+        _scrollPosition = State(initialValue: Self.latestSevenDayStart(for: stats))
+    }
+
+    private var hasData: Bool {
+        stats.contains { $0.hasAnyData }
+    }
+
+    private var xAxisDates: [Date] {
+        stats.map(\.date).sorted()
+    }
+
+    private var xAxisFontSize: CGFloat {
+        stats.count > 10 ? 8 : 10
+    }
+
+    private var averageProtein: Double {
+        average(\.protein)
+    }
+
+    private var averageCarbohydrates: Double {
+        average(\.carbohydrates)
+    }
+
+    private var averageFat: Double {
+        average(\.fat)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("营养成分统计")
+                    .font(.headline)
+                Spacer()
+                Text("有记录以来 \(stats.count) 天")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if hasData {
+                chart
+                    .frame(height: 220)
+
+                summaryRow
+            } else {
+                emptyState
+            }
+        }
+        .padding()
+        .background(AppSurfaceStyle.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
+
+    private var chart: some View {
+        Chart {
+            ForEach(stats) { stat in
+                BarMark(
+                    x: .value("日期", stat.date, unit: .day),
+                    y: .value("克", stat.protein)
+                )
+                .foregroundStyle(by: .value("营养成分", "蛋白质"))
+                .position(by: .value("营养成分", "蛋白质"))
+
+                BarMark(
+                    x: .value("日期", stat.date, unit: .day),
+                    y: .value("克", stat.carbohydrates)
+                )
+                .foregroundStyle(by: .value("营养成分", "碳水"))
+                .position(by: .value("营养成分", "碳水"))
+
+                BarMark(
+                    x: .value("日期", stat.date, unit: .day),
+                    y: .value("克", stat.fat)
+                )
+                .foregroundStyle(by: .value("营养成分", "脂肪"))
+                .position(by: .value("营养成分", "脂肪"))
+            }
+        }
+        .chartForegroundStyleScale([
+            "蛋白质": Color.red,
+            "碳水": Color.blue,
+            "脂肪": Color.yellow
+        ])
+        .chartXAxis {
+            AxisMarks(values: xAxisDates) { value in
+                if let date = value.as(Date.self) {
+                    AxisValueLabel(collisionResolution: .disabled) {
+                        Text(formatAxisDate(date))
+                            .font(.system(size: xAxisFontSize))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks { value in
+                AxisGridLine()
+                AxisValueLabel {
+                    if let grams = value.as(Double.self) {
+                        Text("\(Int(grams))")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+        .chartScrollableAxes(.horizontal)
+        .chartXVisibleDomain(length: sevenDayInterval)
+        .chartScrollPosition(x: $scrollPosition)
+        .onChange(of: stats.last?.date) { _, latestDate in
+            guard latestDate != nil else { return }
+            scrollPosition = Self.latestSevenDayStart(for: stats)
+        }
+    }
+
+    private var summaryRow: some View {
+        HStack {
+            metric("日均蛋白质", value: averageProtein, color: .red)
+            Spacer()
+            metric("日均碳水", value: averageCarbohydrates, color: .blue)
+            Spacer()
+            metric("日均脂肪", value: averageFat, color: .yellow)
+        }
+    }
+
+    private func metric(_ title: String, value: Double, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text(String(format: "%.1f", value))
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundStyle(color)
+                Text("g")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 36))
+                .foregroundStyle(.secondary)
+            Text("暂无营养成分统计")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text("记录蛋白质、碳水和脂肪后会显示每日变化")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 200)
+    }
+
+    private func average(_ keyPath: KeyPath<DailyNutritionStat, Double>) -> Double {
+        guard !stats.isEmpty else { return 0 }
+        return stats.reduce(0) { $0 + $1[keyPath: keyPath] } / Double(stats.count)
+    }
+
+    private func formatAxisDate(_ date: Date) -> String {
+        let components = Calendar.current.dateComponents([.month, .day], from: date)
+        guard let month = components.month, let day = components.day else { return "" }
+        return "\(month)/\(day)"
+    }
+
+    private var sevenDayInterval: TimeInterval {
+        7 * 24 * 60 * 60
+    }
+
+    private static func latestSevenDayStart(for stats: [DailyNutritionStat]) -> Date {
+        guard let latestDate = stats.map(\.date).max() else {
+            return Calendar.current.startOfDay(for: Date())
+        }
+        return Calendar.current.date(byAdding: .day, value: -6, to: latestDate) ?? latestDate
     }
 }
 
@@ -332,34 +522,35 @@ private struct DailyCalorieStat: Identifiable {
 
 private struct DailyCalorieStatsChartView: View {
     let stats: [DailyCalorieStat]
+    @State private var scrollPosition: Date
+
+    init(stats: [DailyCalorieStat]) {
+        self.stats = stats
+        _scrollPosition = State(initialValue: Self.latestSevenDayStart(for: stats))
+    }
 
     private var hasData: Bool {
         stats.contains { $0.hasAnyData }
     }
 
     private var xAxisDates: [Date] {
-        let dates = stats.map(\.date).sorted()
-        let maxLabelCount = 5
-
-        guard dates.count > maxLabelCount else {
-            return dates
-        }
-
-        let lastIndex = dates.count - 1
-        return (0..<maxLabelCount).map { index in
-            let scaledIndex = Double(index) * Double(lastIndex) / Double(maxLabelCount - 1)
-            return dates[Int(scaledIndex.rounded())]
-        }
+        stats.map(\.date).sorted()
     }
 
-    private var totalIntake: Double {
-        stats.reduce(0) { $0 + $1.intakeCalories }
+    private var xAxisFontSize: CGFloat {
+        stats.count > 10 ? 8 : 10
     }
 
-    private var totalBurned: Double? {
+    private var averageIntake: Double {
+        guard !stats.isEmpty else { return 0 }
+        let total = stats.reduce(0) { $0 + $1.intakeCalories }
+        return total / Double(stats.count)
+    }
+
+    private var averageBurned: Double? {
         let values = stats.compactMap(\.burnedCalories)
         guard !values.isEmpty else { return nil }
-        return values.reduce(0, +)
+        return values.reduce(0, +) / Double(values.count)
     }
 
     private var averageDeficit: Double? {
@@ -383,15 +574,13 @@ private struct DailyCalorieStatsChartView: View {
                 chart
                     .frame(height: 240)
 
-                legendRow
-
                 summaryRow
             } else {
                 emptyState
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
@@ -445,9 +634,9 @@ private struct DailyCalorieStatsChartView: View {
         .chartXAxis {
             AxisMarks(values: xAxisDates) { value in
                 if let date = value.as(Date.self) {
-                    AxisValueLabel {
+                    AxisValueLabel(collisionResolution: .disabled) {
                         Text(formatAxisDate(date))
-                            .font(.caption2)
+                            .font(.system(size: xAxisFontSize))
                             .foregroundStyle(.secondary)
                             .monospacedDigit()
                     }
@@ -466,33 +655,22 @@ private struct DailyCalorieStatsChartView: View {
                 }
             }
         }
-    }
-
-    private var legendRow: some View {
-        HStack(spacing: 14) {
-            legendItem("摄入", color: .orange, symbol: "square.fill")
-            legendItem("消耗", color: .red, symbol: "square.fill")
-            legendItem("缺口", color: .green, symbol: "line.diagonal")
-        }
-        .font(.caption)
-        .foregroundStyle(.secondary)
-    }
-
-    private func legendItem(_ title: String, color: Color, symbol: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: symbol)
-                .foregroundStyle(color)
-            Text(title)
+        .chartScrollableAxes(.horizontal)
+        .chartXVisibleDomain(length: sevenDayInterval)
+        .chartScrollPosition(x: $scrollPosition)
+        .onChange(of: stats.last?.date) { _, latestDate in
+            guard latestDate != nil else { return }
+            scrollPosition = Self.latestSevenDayStart(for: stats)
         }
     }
 
     private var summaryRow: some View {
         HStack {
-            metric("总摄入", value: totalIntake.formattedCalories, unit: "kcal", color: .orange)
+            metric("平均摄入", value: averageIntake.formattedCalories, unit: "kcal", color: .orange)
 
             Spacer()
 
-            metric("总消耗", value: totalBurned?.formattedCalories ?? "--", unit: "kcal", color: .red)
+            metric("平均消耗", value: averageBurned?.formattedCalories ?? "--", unit: "kcal", color: .red)
 
             Spacer()
 
@@ -549,6 +727,17 @@ private struct DailyCalorieStatsChartView: View {
             return ""
         }
         return "\(month)/\(day)"
+    }
+
+    private var sevenDayInterval: TimeInterval {
+        7 * 24 * 60 * 60
+    }
+
+    private static func latestSevenDayStart(for stats: [DailyCalorieStat]) -> Date {
+        guard let latestDate = stats.map(\.date).max() else {
+            return Calendar.current.startOfDay(for: Date())
+        }
+        return Calendar.current.date(byAdding: .day, value: -6, to: latestDate) ?? latestDate
     }
 }
 

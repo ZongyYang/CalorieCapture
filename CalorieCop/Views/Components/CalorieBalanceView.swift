@@ -1,9 +1,44 @@
 import SwiftUI
 
-struct CalorieBalanceView: View {
+enum AppSurfaceStyle {
+    static let pageBackground = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.black
+            : UIColor.systemGroupedBackground
+    })
+
+    static let cardBackground = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.systemGray6
+            : UIColor.systemBackground
+    })
+
+    // Grouped form modules sit one level above the page background and below
+    // their white/light input surfaces, matching the record form hierarchy.
+    static let moduleBackground = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.systemGray6
+            : UIColor.systemGray5
+    })
+}
+
+struct CalorieBalanceView<SupplementaryContent: View>: View {
     let consumed: Double
     let burned: Double
     var targetDeficit: Double? = nil  // The planned daily calorie deficit to reach weight goal
+    let supplementaryContent: SupplementaryContent
+
+    init(
+        consumed: Double,
+        burned: Double,
+        targetDeficit: Double? = nil,
+        @ViewBuilder supplementaryContent: () -> SupplementaryContent
+    ) {
+        self.consumed = consumed
+        self.burned = burned
+        self.targetDeficit = targetDeficit
+        self.supplementaryContent = supplementaryContent()
+    }
 
     // Current signed deficit. Positive means burned more than consumed;
     // negative means consumed more than burned.
@@ -52,6 +87,8 @@ struct CalorieBalanceView: View {
 
     var body: some View {
         VStack(spacing: 16) {
+            supplementaryContent
+
             HStack(spacing: 8) {
                 VStack(spacing: 4) {
                     Image(systemName: "fork.knife")
@@ -124,9 +161,17 @@ struct CalorieBalanceView: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
+}
+
+extension CalorieBalanceView where SupplementaryContent == EmptyView {
+    init(consumed: Double, burned: Double, targetDeficit: Double? = nil) {
+        self.init(consumed: consumed, burned: burned, targetDeficit: targetDeficit) {
+            EmptyView()
+        }
     }
 }
 

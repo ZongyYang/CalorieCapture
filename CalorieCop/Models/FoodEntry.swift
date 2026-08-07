@@ -74,6 +74,8 @@ final class FoodEntry {
     var createdAt: Date
     var categoryRawValue: String?
     var mealTypeRawValue: String?
+    var energyUnitRawValue: String?
+    var nutritionEstimatedByAI: Bool?
 
     var category: FoodEntryCategory {
         get {
@@ -116,9 +118,38 @@ final class FoodEntry {
         return category.systemImage
     }
 
+    var energyUnit: EnergyUnit {
+        get {
+            guard let energyUnitRawValue,
+                  let unit = EnergyUnit(rawValue: energyUnitRawValue) else {
+                return .kilocalorie
+            }
+            return unit
+        }
+        set {
+            energyUnitRawValue = newValue.rawValue
+        }
+    }
+
+    var displayedEnergy: Double {
+        energyUnit.fromKilocalories(calories)
+    }
+
+    var isNutritionMissing: Bool {
+        protein <= 0 && carbohydrates <= 0 && fat <= 0
+    }
+
+    var hasCompleteNutritionInfo: Bool {
+        if nutritionEstimatedByAI == true {
+            return true
+        }
+        return calories > 0 && protein > 0 && carbohydrates > 0 && fat > 0
+    }
+
     init(rawInput: String, foodName: String, brand: String? = nil, grams: Double,
          calories: Double, protein: Double, carbohydrates: Double, fat: Double,
-         date: Date = Date(), category: FoodEntryCategory = .meal, mealType: FoodMealType? = nil) {
+         date: Date = Date(), category: FoodEntryCategory = .meal, mealType: FoodMealType? = nil,
+         energyUnit: EnergyUnit = .kilocalorie, nutritionEstimatedByAI: Bool = false) {
         self.id = UUID()
         self.rawInput = rawInput
         self.foodName = foodName
@@ -131,6 +162,8 @@ final class FoodEntry {
         self.createdAt = date
         self.categoryRawValue = category.rawValue
         self.mealTypeRawValue = category == .meal ? mealType?.rawValue : nil
+        self.energyUnitRawValue = energyUnit.rawValue
+        self.nutritionEstimatedByAI = nutritionEstimatedByAI
     }
 
     convenience init(rawInput: String, nutrition: NutritionInfo) {

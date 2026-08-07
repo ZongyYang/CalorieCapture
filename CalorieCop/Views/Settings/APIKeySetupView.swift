@@ -1,4 +1,113 @@
 import SwiftUI
+import SwiftData
+
+struct AppSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @StateObject private var healthKitService = HealthKitService()
+    @Query(sort: \WeightEntry.date, order: .reverse) private var weightEntries: [WeightEntry]
+    @Query(sort: \FoodPreference.usageCount, order: .reverse) private var foodPreferences: [FoodPreference]
+
+    var onAPISettingsChanged: (() -> Void)?
+
+    private var currentWeight: Double? {
+        healthKitService.currentWeight ?? weightEntries.first?.weight
+    }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("目标") {
+                    NavigationLink {
+                        GoalSettingView(
+                            passedCurrentWeight: currentWeight,
+                            passedAverageDailyCaloriesBurned: healthKitService.recentAverageCaloriesBurned,
+                            passedAverageDailyCaloriesBurnedDays: healthKitService.recentAverageCaloriesBurnedDays
+                        )
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("设置目标")
+                                    .foregroundStyle(.primary)
+                                Text("目标体重、目标日期和热量缺口")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "target")
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                }
+
+                Section("AI 服务") {
+                    NavigationLink {
+                        APIKeySetupView {
+                            onAPISettingsChanged?()
+                        }
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("API 设置")
+                                    .foregroundStyle(.primary)
+                                Text("配置 DeepSeek、MiniMax 和 Qwen")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "key.fill")
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                }
+
+                Section("数据") {
+                    NavigationLink {
+                        FoodPreferencesSettingsView()
+                    } label: {
+                        Label {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("保存的习惯")
+                                    .foregroundStyle(.primary)
+                        Text("管理已保存的食物习惯")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        } icon: {
+                            Image(systemName: "heart.fill")
+                                .foregroundStyle(.pink)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("设置")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") {
+                        dismiss()
+                    }
+                }
+            }
+            .task {
+                await healthKitService.requestAuthorization()
+                await healthKitService.fetchRecentAverageCaloriesBurned()
+            }
+        }
+    }
+}
+
+struct AppSettingsToolbarButton: View {
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        Button {
+            isPresented = true
+        } label: {
+            Image(systemName: "gearshape")
+        }
+        .accessibilityLabel("设置")
+    }
+}
 
 struct APIKeySetupView: View {
     @Environment(\.dismiss) private var dismiss

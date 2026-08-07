@@ -1,5 +1,7 @@
 import SwiftUI
 import SwiftData
+import PhotosUI
+import UIKit
 
 struct AIAdvisorToolbarButton: View {
     @Binding var isPresented: Bool
@@ -9,7 +11,6 @@ struct AIAdvisorToolbarButton: View {
             isPresented = true
         } label: {
             Image(systemName: "sparkles")
-            Text("AI顾问")
         }
         .accessibilityLabel("AI顾问")
     }
@@ -33,8 +34,14 @@ struct AIAdvisorView: View {
     @State private var sessionStartTime = Date()  // Track current session for API calls
     @State private var streamingMessageId: UUID?  // Track message being streamed
     @State private var streamingContent = ""  // Accumulate streaming content
-    @State private var showingAPIKeySetup = false  // API key setup sheet
+    @State private var showingSettings = false  // Unified settings sheet
     @State private var apiKeyRefreshTrigger = false
+    @State private var selectedPhotos: [PhotosPickerItem] = []
+    @State private var selectedImages: [UIImage] = []
+    @State private var capturedImage: UIImage?
+    @State private var showingCamera = false
+    @State private var inputAlertMessage: String?
+    @State private var isAdvisorInputFocused = false
 
     private var isAdvisorAPIConfigured: Bool {
         APIKeyManager.isDeepSeekConfigured || APIKeyManager.isMiniMaxConfigured || APIKeyManager.isQwenConfigured
@@ -200,23 +207,119 @@ struct AIAdvisorView: View {
                 Divider()
 
                 // Input
-                HStack(spacing: 12) {
-                    TextField("问问AI顾问...", text: $userQuestion, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...4)
-
-                    Button {
-                        Task {
-                            await sendMessage()
+                VStack(spacing: 0) {
+                    if !selectedImages.isEmpty {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 10) {
+                                ForEach(Array(selectedImages.enumerated()), id: \.offset) { index, image in
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 72, height: 72)
+                                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                                        .overlay(alignment: .topTrailing) {
+                                            Button {
+                                                selectedImages.remove(at: index)
+                                            } label: {
+                                                Image(systemName: "xmark.circle.fill")
+                                                    .font(.title3)
+                                                    .symbolRenderingMode(.palette)
+                                                    .foregroundStyle(.white, .black.opacity(0.65))
+                                            }
+                                            .buttonStyle(.plain)
+                                            .offset(x: 6, y: -6)
+                                            .accessibilityLabel("移除第\(index + 1)张照片")
+                                        }
+                                }
+                            }
+                            .padding(.horizontal)
+                            .padding(.top, 10)
+                            .padding(.bottom, 6)
                         }
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
-                            .foregroundStyle(userQuestion.isEmpty ? .gray : .blue)
                     }
-                    .disabled(userQuestion.isEmpty || isLoading)
+
+                    HStack(spacing: 12) {
+                        ImagePasteTextField(
+                            text: $userQuestion,
+                            placeholder: "输入问题或图片说明",
+                            isEnabled: !isLoading,
+                            returnKeyType: .send,
+                            focusBinding: $isAdvisorInputFocused,
+                            onSubmit: {
+                                guard canSendMessage, !isLoading else { return }
+                                Task { await sendMessage() }
+                            },
+                            onPasteImage: { image in
+                                appendAdvisorImage(image)
+                            },
+                            onPasteFailure: {
+                                inputAlertMessage = "剪贴板中没有可用的文字或图片。"
+                            }
+                        )
+                        .frame(height: 36)
+
+                        if !userQuestion.isEmpty {
+                            Button {
+                                userQuestion = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("清空文字")
+                        }
+
+                        Divider()
+                            .frame(height: 22)
+
+                        if isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                                .frame(width: 30, height: 30)
+                                .accessibilityLabel("正在分析")
+                        } else {
+                            Button {
+                                Task {
+                                    await sendMessage()
+                                }
+                            } label: {
+                                Image(systemName: "sparkles")
+                                    .frame(width: 30, height: 30)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(canSendMessage ? Color.blue : Color.secondary)
+                            .disabled(!canSendMessage)
+                            .accessibilityLabel("发送给AI顾问")
+                        }
+
+                        Button {
+                            openCamera()
+                        } label: {
+                            Image(systemName: "camera.fill")
+                                .frame(width: 30, height: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.primary)
+                        .disabled(isLoading)
+                        .accessibilityLabel("拍照")
+
+                        PhotosPicker(selection: $selectedPhotos, maxSelectionCount: 8, matching: .images) {
+                            Image(systemName: "photo.fill")
+                                .frame(width: 30, height: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.primary)
+                        .disabled(isLoading)
+                        .accessibilityLabel("从相册选择照片")
+                    }
+                    .frame(height: 36)
+                    .foodSearchBarSurface()
+                    .padding(.horizontal)
+                    .padding(.vertical, 8)
                 }
-                .padding()
                 .background(Color(.systemBackground))
                 }  // End of else block for API configured
             }
@@ -265,12 +368,70 @@ struct AIAdvisorView: View {
                 // Save any streaming content before disappearing
                 saveStreamingContent()
             }
-            .sheet(isPresented: $showingAPIKeySetup) {
-                APIKeySetupView {
+            .sheet(isPresented: $showingSettings) {
+                AppSettingsView {
                     apiKeyRefreshTrigger.toggle()
                 }
             }
+            .sheet(isPresented: $showingCamera) {
+                CameraView(image: $capturedImage)
+            }
+            .alert("提示", isPresented: Binding(
+                get: { inputAlertMessage != nil },
+                set: { if !$0 { inputAlertMessage = nil } }
+            )) {
+                Button("好的", role: .cancel) {}
+            } message: {
+                Text(inputAlertMessage ?? "")
+            }
+            .onChange(of: selectedPhotos) { _, newItems in
+                guard !newItems.isEmpty else { return }
+                Task {
+                    var loadedImages: [UIImage] = []
+                    for item in newItems {
+                        if let data = try? await item.loadTransferable(type: Data.self),
+                           let image = UIImage(data: data) {
+                            loadedImages.append(image)
+                        }
+                    }
+                    await MainActor.run {
+                        let availableSlots = max(0, 8 - selectedImages.count)
+                        selectedImages.append(contentsOf: loadedImages.prefix(availableSlots))
+                        selectedPhotos = []
+                        if loadedImages.isEmpty {
+                            inputAlertMessage = "无法读取所选照片，请重新选择。"
+                        } else if loadedImages.count > availableSlots {
+                            inputAlertMessage = "每次提问最多可添加 8 张照片。"
+                        }
+                    }
+                }
+            }
+            .onChange(of: showingCamera) { _, isShowing in
+                guard !isShowing, let capturedImage else { return }
+                appendAdvisorImage(capturedImage)
+                self.capturedImage = nil
+            }
         }
+    }
+
+    private var canSendMessage: Bool {
+        !userQuestion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func openCamera() {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            inputAlertMessage = "当前设备没有可用的相机。"
+            return
+        }
+        showingCamera = true
+    }
+
+    private func appendAdvisorImage(_ image: UIImage) {
+        guard selectedImages.count < 8 else {
+            inputAlertMessage = "每次提问最多可添加 8 张照片。"
+            return
+        }
+        selectedImages.append(image)
     }
 
     private var apiKeyPromptSection: some View {
@@ -290,7 +451,7 @@ struct AIAdvisorView: View {
                 .padding(.horizontal)
 
             Button {
-                showingAPIKeySetup = true
+                showingSettings = true
             } label: {
                 HStack {
                     Image(systemName: "gear")
@@ -389,11 +550,18 @@ struct AIAdvisorView: View {
     }
 
     private func sendMessage() async {
-        let question = userQuestion
+        let typedQuestion = userQuestion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let images = selectedImages
+        guard !typedQuestion.isEmpty else { return }
+
+        let question = typedQuestion
         userQuestion = ""
+        selectedImages = []
+        selectedPhotos = []
 
         // Save user message
-        let userMessage = ChatMessage(role: "user", content: question)
+        let displayedQuestion = images.isEmpty ? question : "📷×\(images.count) \(question)"
+        let userMessage = ChatMessage(role: "user", content: displayedQuestion)
         modelContext.insert(userMessage)
         try? modelContext.save()
 
@@ -407,7 +575,7 @@ struct AIAdvisorView: View {
         streamingMessageId = assistantMessage.id
 
         do {
-            let finalContent = try await askAIStreaming(question: question) { content in
+            let finalContent = try await askAIStreaming(question: question, images: images) { content in
                 // Update streaming content on main thread
                 Task { @MainActor in
                     streamingContent = content
@@ -615,7 +783,24 @@ struct AIAdvisorView: View {
         return choices.first?.message.content ?? "无法获取回复"
     }
 
-    private func askAIStreaming(question: String, onContent: @escaping (String) -> Void) async throws -> String {
+    private func askAIStreaming(
+        question: String,
+        images: [UIImage] = [],
+        onContent: @escaping (String) -> Void
+    ) async throws -> String {
+        if !images.isEmpty {
+            guard let qwenAPIKey = APIKeyManager.qwenAPIKey, !qwenAPIKey.isEmpty else {
+                throw AIServiceError.chatError("照片分析需要先在 API 设置中配置 Qwen API 密钥。")
+            }
+            let content = try await requestQwenVisionAdvisor(
+                apiKey: qwenAPIKey,
+                question: question,
+                images: images
+            )
+            onContent(content)
+            return content
+        }
+
         let messages = advisorMessages(for: question)
         var errors: [String] = []
 
@@ -697,6 +882,7 @@ struct AIAdvisorView: View {
 风格：温暖亲切，多用emoji表情😊🎉💪，像好朋友聊天。用"你"称呼用户，多鼓励夸奖。
 格式：用•列表，可用**粗体**强调。禁止表格和代码块。
 规则：简洁实用，用数据支持，中文，不超过150字。
+图片可用于识别食物、营养标签、餐盘份量或辅助健康建议；无法确认的信息要明确说明不确定性。
 """
 
         var messages: [[String: String]] = [
@@ -813,6 +999,56 @@ struct AIAdvisorView: View {
         )
     }
 
+    private func requestQwenVisionAdvisor(
+        apiKey: String,
+        question: String,
+        images: [UIImage]
+    ) async throws -> String {
+        var encodedImages: [String] = []
+        for image in images {
+            let resizedImage = resizeAdvisorImage(image, maxDimension: 1024)
+            guard let imageData = resizedImage.jpegData(compressionQuality: 0.72) else {
+                throw AIServiceError.chatError("无法处理所选照片，请重新选择。")
+            }
+            encodedImages.append(imageData.base64EncodedString())
+        }
+
+        let textMessages = advisorMessages(for: question)
+        var contextMessages = Array(textMessages.dropLast())
+        if contextMessages.last?["role"] == "user",
+           contextMessages.last?["content"]?.hasSuffix(question) == true,
+           contextMessages.last?["content"]?.hasPrefix("📷×") == true {
+            contextMessages.removeLast()
+        }
+        var messages: [[String: Any]] = contextMessages.map {
+            ["role": $0["role"] ?? "user", "content": $0["content"] ?? ""]
+        }
+        var multimodalContent: [[String: Any]] = encodedImages.map {
+            ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\($0)"]]
+        }
+        multimodalContent.append(["type": "text", "text": question])
+        messages.append([
+            "role": "user",
+            "content": multimodalContent
+        ])
+
+        let requestBody: [String: Any] = [
+            "model": "qwen3-vl-plus",
+            "messages": messages,
+            "temperature": 0.4,
+            "stream": false,
+            "max_completion_tokens": 512
+        ]
+
+        return try await requestChatCompletion(
+            endpoint: APIKeyManager.qwenEndpoint,
+            apiKey: apiKey,
+            requestBody: requestBody,
+            providerName: "Qwen Vision",
+            logRequestBody: false
+        )
+    }
+
     private func requestDeepSeekAdvisor(apiKey: String, messages: [[String: String]]) async throws -> String {
         let requestBody: [String: Any] = [
             "model": "deepseek-v4-flash",
@@ -833,7 +1069,8 @@ struct AIAdvisorView: View {
         endpoint: URL,
         apiKey: String,
         requestBody: [String: Any],
-        providerName: String
+        providerName: String,
+        logRequestBody: Bool = true
     ) async throws -> String {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
@@ -841,7 +1078,10 @@ struct AIAdvisorView: View {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         let bodyData = try JSONSerialization.data(withJSONObject: requestBody)
         request.httpBody = bodyData
-        DebugLogger.shared.logAPIRequest(endpoint: endpoint.absoluteString, body: String(data: bodyData, encoding: .utf8))
+        DebugLogger.shared.logAPIRequest(
+            endpoint: endpoint.absoluteString,
+            body: logRequestBody ? String(data: bodyData, encoding: .utf8) : "包含图片的多模态请求（已省略图片数据）"
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
@@ -865,6 +1105,18 @@ struct AIAdvisorView: View {
         }
 
         return content
+    }
+
+    private func resizeAdvisorImage(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let largestDimension = max(image.size.width, image.size.height)
+        guard largestDimension > maxDimension else { return image }
+
+        let scale = maxDimension / largestDimension
+        let targetSize = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: targetSize)
+        return renderer.image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
     }
 
     private func extractResponseText(fromJSONString jsonString: String) -> String? {

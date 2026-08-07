@@ -14,11 +14,13 @@ struct FoodConfirmationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Query private var existingPreferences: [FoodPreference]
+    @Query(sort: \FoodEntry.createdAt, order: .reverse) private var existingEntries: [FoodEntry]
 
     let rawInput: String
     let originalNutrition: NutritionInfo
     let initialCategory: FoodEntryCategory
     let initialMealType: FoodMealType?
+    let initialEnergyUnit: EnergyUnit
     let onConfirm: (NutritionInfo, FoodEntryCategory, FoodMealType?) -> Void
 
     init(
@@ -26,12 +28,14 @@ struct FoodConfirmationView: View {
         originalNutrition: NutritionInfo,
         initialCategory: FoodEntryCategory = .meal,
         initialMealType: FoodMealType? = nil,
+        initialEnergyUnit: EnergyUnit = .kilocalorie,
         onConfirm: @escaping (NutritionInfo, FoodEntryCategory, FoodMealType?) -> Void
     ) {
         self.rawInput = rawInput
         self.originalNutrition = originalNutrition
         self.initialCategory = initialCategory
         self.initialMealType = initialMealType
+        self.initialEnergyUnit = initialEnergyUnit
         self.onConfirm = onConfirm
     }
 
@@ -51,14 +55,32 @@ struct FoodConfirmationView: View {
     @State private var preferenceKeyword = ""
     @State private var preferenceDescription = ""
     @State private var preferenceSaveMessage: String?
+    @State private var matchedPreferenceID: UUID?
+    @State private var matchedPreferenceKind: FoodPreferenceMatchKind?
+    @State private var addAsNewPreference = false
 
     private var quantityUnit: String {
         category.quantityUnitSymbol
     }
 
+    private var knownBrands: [String] {
+        BrandSuggestionCatalog.brands(
+            entries: existingEntries,
+            preferences: existingPreferences
+        )
+    }
+
+    private var matchedPreference: FoodPreference? {
+        guard let matchedPreferenceID else { return nil }
+        return existingPreferences.first { $0.id == matchedPreferenceID }
+    }
+
+    private var targetExistingPreference: FoodPreference? {
+        addAsNewPreference ? nil : matchedPreference
+    }
+
     private var hasExistingPreference: Bool {
-        let keyword = preferenceKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
-        return existingPreferences.contains { $0.matches(keyword: keyword, brand: brand) }
+        targetExistingPreference != nil
     }
 
     private var canSavePreference: Bool {
@@ -129,20 +151,23 @@ struct FoodConfirmationView: View {
                 }
             }
             .onAppear {
-                // Initialize editable fields from original nutrition
-                foodName = originalNutrition.foodName
-                brand = originalNutrition.brand ?? ""
-                grams = String(format: "%.1f", originalNutrition.grams)
-                calories = String(format: "%.0f", originalNutrition.calories)
-                protein = String(format: "%.1f", originalNutrition.protein)
-                carbohydrates = String(format: "%.1f", originalNutrition.carbohydrates)
-                fat = String(format: "%.1f", originalNutrition.fat)
-                category = initialCategory
-                mealType = initialMealType ?? FoodMealType.defaultType(for: originalNutrition.entryDate)
+                applyOriginalNutrition()
 
-                // Pre-fill preference fields
-                preferenceKeyword = originalNutrition.foodName
-                preferenceDescription = "\(originalNutrition.grams.formattedGrams)\(quantityUnit)\(originalNutrition.foodName)"
+                if let match = existingPreferences.bestMatch(
+                    foodName: originalNutrition.foodName,
+                    brand: originalNutrition.brand
+                ) {
+                    matchedPreferenceID = match.preference.id
+                    matchedPreferenceKind = match.kind
+                    applyMatchedPreference(match.preference)
+                }
+            }
+            .onChange(of: addAsNewPreference) { _, shouldCreateNew in
+                if shouldCreateNew {
+                    applyOriginalNutrition()
+                } else if let matchedPreference {
+                    applyMatchedPreference(matchedPreference)
+                }
             }
         }
     }
@@ -171,6 +196,56 @@ struct FoodConfirmationView: View {
         return trimmedText.isEmpty ? nil : trimmedText
     }
 
+    private func applyOriginalNutrition() {
+        foodName = originalNutrition.foodName
+        brand = originalNutrition.brand ?? ""
+        grams = String(format: "%.1f", originalNutrition.grams)
+        calories = String(format: "%.0f", originalNutrition.calories)
+        protein = String(format: "%.1f", originalNutrition.protein)
+        carbohydrates = String(format: "%.1f", originalNutrition.carbohydrates)
+        fat = String(format: "%.1f", originalNutrition.fat)
+        category = initialCategory
+        mealType = initialMealType ?? FoodMealType.defaultType(for: originalNutrition.entryDate)
+        preferenceKeyword = originalNutrition.foodName
+        preferenceDescription = "\(originalNutrition.grams.formattedGrams)\(initialCategory.quantityUnitSymbol)\(originalNutrition.foodName)"
+    }
+
+    private func applyMatchedPreference(_ preference: FoodPreference) {
+        let quantity = preference.defaultGrams ?? originalNutrition.grams
+        let scale = quantity > 0 ? quantity / 100 : 1
+
+        foodName = preference.keyword
+        brand = preference.brand ?? ""
+        grams = String(format: "%.1f", quantity)
+        calories = String(
+            format: "%.0f",
+            preference.resolvedCaloriesPer100.map { $0 * scale }
+                ?? preference.defaultCalories
+                ?? originalNutrition.calories
+        )
+        protein = String(
+            format: "%.1f",
+            preference.resolvedProteinPer100.map { $0 * scale }
+                ?? preference.defaultProtein
+                ?? originalNutrition.protein
+        )
+        carbohydrates = String(
+            format: "%.1f",
+            preference.resolvedCarbsPer100.map { $0 * scale }
+                ?? preference.defaultCarbs
+                ?? originalNutrition.carbohydrates
+        )
+        fat = String(
+            format: "%.1f",
+            preference.resolvedFatPer100.map { $0 * scale }
+                ?? preference.defaultFat
+                ?? originalNutrition.fat
+        )
+        category = preference.category
+        preferenceKeyword = preference.keyword
+        preferenceDescription = preference.defaultDescription
+    }
+
     private func recordIntake() {
         focusedField = nil
         editingField = nil
@@ -192,33 +267,54 @@ struct FoodConfirmationView: View {
             return
         }
 
+        if addAsNewPreference,
+           existingPreferences.contains(where: { $0.matches(keyword: keyword, brand: editedNutrition.brand) }) {
+            preferenceSaveMessage = "请修改习惯关键词或品牌后再新建"
+            return
+        }
+
         let nutrition = editedNutrition
         let description = preferenceDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedDescription = description.isEmpty
             ? "\(Int(nutrition.grams))\(quantityUnit), \(Int(nutrition.calories))kcal"
             : description
 
-        // Check if preference already exists
-        if let existing = existingPreferences.first(where: { $0.matches(keyword: keyword, brand: nutrition.brand) }) {
+        // Update an exact/similar match when selected; otherwise create a new habit.
+        if let existing = targetExistingPreference {
+            let isSimilarMatch = matchedPreferenceKind == .similar
             // Update existing with new values
-            existing.keyword = keyword
-            existing.updateBrand(nutrition.brand)
+            if !isSimilarMatch {
+                existing.keyword = keyword
+                existing.updateBrand(nutrition.brand)
+            }
+            existing.category = category
+            existing.energyUnit = initialEnergyUnit
             existing.defaultDescription = resolvedDescription
-            existing.defaultGrams = nutrition.grams
-            existing.defaultCalories = nutrition.calories
-            existing.defaultProtein = nutrition.protein
-            existing.defaultCarbs = nutrition.carbohydrates
-            existing.defaultFat = nutrition.fat
+            existing.updateNutritionReference(
+                quantity: nutrition.grams,
+                calories: nutrition.calories,
+                protein: nutrition.protein,
+                carbs: nutrition.carbohydrates,
+                fat: nutrition.fat
+            )
             existing.usageCount += 1
-            preferenceSaveMessage = "已更新食物习惯"
+            preferenceSaveMessage = isSimilarMatch ? "已更新相似食物习惯" : "已更新食物习惯"
         } else {
             // Create new with nutrition values
-            let preference = FoodPreference(keyword: keyword, brand: nutrition.brand, defaultDescription: resolvedDescription)
-            preference.defaultGrams = nutrition.grams
-            preference.defaultCalories = nutrition.calories
-            preference.defaultProtein = nutrition.protein
-            preference.defaultCarbs = nutrition.carbohydrates
-            preference.defaultFat = nutrition.fat
+            let preference = FoodPreference(
+                keyword: keyword,
+                brand: nutrition.brand,
+                defaultDescription: resolvedDescription,
+                category: category,
+                energyUnit: initialEnergyUnit
+            )
+            preference.updateNutritionReference(
+                quantity: nutrition.grams,
+                calories: nutrition.calories,
+                protein: nutrition.protein,
+                carbs: nutrition.carbohydrates,
+                fat: nutrition.fat
+            )
             modelContext.insert(preference)
             preferenceSaveMessage = "已保存食物习惯"
         }
@@ -302,14 +398,13 @@ struct FoodConfirmationView: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
 
-            TextField("品牌（可选）", text: $brand)
-                .textFieldStyle(.plain)
-                .multilineTextAlignment(.center)
-                .padding(.vertical, 8)
-                .padding(.horizontal, 12)
+            BrandAutocompleteField(
+                text: $brand,
+                brands: knownBrands,
+                inputBackground: Color(.systemBackground).opacity(0.85),
+                textAlignment: .center
+            )
                 .frame(maxWidth: 240)
-                .background(Color(.systemBackground).opacity(0.85))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
         }
         .frame(maxWidth: .infinity)
         .padding()
@@ -357,7 +452,43 @@ struct FoodConfirmationView: View {
                     field: .fat
                 )
             }
+
+            if let quantity = Double(grams), quantity > 0 {
+                Divider()
+
+                Text("单位数据")
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                    unitNutritionValue(title: "热量", value: calories, quantity: quantity, unit: "kcal")
+                    unitNutritionValue(title: "蛋白质", value: protein, quantity: quantity, unit: "g")
+                    unitNutritionValue(title: "碳水", value: carbohydrates, quantity: quantity, unit: "g")
+                    unitNutritionValue(title: "脂肪", value: fat, quantity: quantity, unit: "g")
+                }
+            }
         }
+    }
+
+    private func unitNutritionValue(title: String, value: String, quantity: Double, unit: String) -> some View {
+        let totalValue = Double(value) ?? 0
+        let unitValue = totalValue * 100 / quantity
+
+        return HStack {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text("\(unitValue.formattedGrams) \(unit)/100\(quantityUnit)")
+                .font(.caption)
+                .fontWeight(.medium)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        }
+        .padding(10)
+        .background(Color(.systemGray6))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
 
     @ViewBuilder
@@ -534,10 +665,32 @@ struct FoodConfirmationView: View {
                 TextField("描述，如：150ml全脂牛奶", text: $preferenceDescription)
                     .textFieldStyle(.roundedBorder)
 
-                if hasExistingPreference {
-                    Label("将更新现有的习惯设定", systemImage: "arrow.triangle.2.circlepath")
+                if let matchedPreference {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Label(
+                            addAsNewPreference
+                                ? "已找到食物习惯：\(matchedPreference.keyword)"
+                                : "已加载食物习惯：\(matchedPreference.keyword)",
+                            systemImage: addAsNewPreference ? "link" : "heart.fill"
+                        )
                         .font(.caption)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(addAsNewPreference ? Color.orange : Color.pink)
+
+                        Text(
+                            addAsNewPreference
+                                ? "当前保留 AI 识别结果，保存时将新建习惯。"
+                                : "当前使用该习惯已保存的名称、品牌和营养数据。"
+                        )
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+
+                        Toggle("添加为新的食物习惯", isOn: $addAsNewPreference)
+                            .font(.subheadline)
+                    }
+                } else {
+                    Label("尚未保存到食物习惯，可新建习惯", systemImage: "heart")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(.top, 4)

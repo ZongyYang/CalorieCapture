@@ -56,3 +56,6 @@ Secrets.swift
 *.xcconfig.local
 .env
 .env.local
+
+# Local personal-data migration export; keep out of source control
+CalorieCop/Resources/migration_data.json

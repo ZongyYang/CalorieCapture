@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import PhotosUI
 
 struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
@@ -13,7 +14,15 @@ struct DashboardView: View {
 
     @State private var goalRefreshTrigger = UUID()
     @State private var showingAIAdvisor = false
-    @State private var showingAPIKeySetup = false
+    @State private var showingSettings = false
+    @State private var showingFoodInput = false
+    @State private var showingDashboardCamera = false
+    @State private var showingDashboardCameraAlert = false
+    @State private var dashboardSearchText = ""
+    @State private var dashboardSelectedImage: UIImage?
+    @State private var dashboardSelectedPhoto: PhotosPickerItem?
+    @State private var isDashboardSearchFocused = false
+    @State private var shouldAutoStartFoodRecognition = false
 
     private var currentGoal: UserGoal? { goals.first }
 
@@ -101,14 +110,14 @@ struct DashboardView: View {
                 }
                 .padding()
             }
-            .background(Color(.systemGroupedBackground))
+            .background(AppSurfaceStyle.pageBackground)
             .navigationTitle("今日概览")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     AIAdvisorToolbarButton(isPresented: $showingAIAdvisor)
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    APISettingsToolbarButton(isPresented: $showingAPIKeySetup)
+                    AppSettingsToolbarButton(isPresented: $showingSettings)
                 }
             }
             .sheet(isPresented: $showingAIAdvisor) {
@@ -119,8 +128,37 @@ struct DashboardView: View {
                     weightHistory: combinedWeightHistory
                 )
             }
-            .sheet(isPresented: $showingAPIKeySetup) {
-                APIKeySetupView()
+            .sheet(isPresented: $showingSettings) {
+                AppSettingsView()
+            }
+            .sheet(isPresented: $showingFoodInput) {
+                FoodInputView(
+                    initialSearchText: dashboardSearchText,
+                    initialImage: dashboardSelectedImage,
+                    autoStartRecognition: shouldAutoStartFoodRecognition
+                ) {
+                    dashboardSearchText = ""
+                    dashboardSelectedImage = nil
+                    dashboardSelectedPhoto = nil
+                    shouldAutoStartFoodRecognition = false
+                    showingFoodInput = false
+                }
+            }
+            .sheet(isPresented: $showingDashboardCamera) {
+                CameraView(image: $dashboardSelectedImage)
+            }
+            .alert("相机不可用", isPresented: $showingDashboardCameraAlert) {
+                Button("好的", role: .cancel) {}
+            } message: {
+                Text("请在真机上使用相机功能，或从相册选择图片。")
+            }
+            .onChange(of: dashboardSelectedPhoto) {
+                Task {
+                    if let data = try? await dashboardSelectedPhoto?.loadTransferable(type: Data.self),
+                       let image = UIImage(data: data) {
+                        dashboardSelectedImage = image
+                    }
+                }
             }
             .task {
                 await healthKitService.requestAuthorization()
@@ -145,7 +183,9 @@ struct DashboardView: View {
                 consumed: totalCaloriesConsumed,
                 burned: totalCaloriesBurned,
                 targetDeficit: targetDeficit
-            )
+            ) {
+                foodSearchSection
+            }
             .id(goalRefreshTrigger)
 
             if hasHealthKitCalories {
@@ -158,6 +198,101 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+
+    private var foodSearchSection: some View {
+        HStack(spacing: 8) {
+            ImagePasteTextField(
+                text: $dashboardSearchText,
+                placeholder: "搜索习惯或输入食物",
+                returnKeyType: .search,
+                focusBinding: $isDashboardSearchFocused,
+                onSubmit: {
+                    presentFoodInput(autoStartRecognition: true)
+                },
+                onPasteImage: { image in
+                    dashboardSelectedImage = image
+                },
+                onPasteFailure: {}
+            )
+
+            if !dashboardSearchText.isEmpty {
+                Button {
+                    dashboardSearchText = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+
+            Divider()
+                .frame(height: 22)
+
+            Button {
+                presentFoodInput(autoStartRecognition: true)
+            } label: {
+                Image(systemName: "sparkles")
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .opacity(canRecognizeFromDashboardSearch ? 1 : 0.45)
+            .accessibilityLabel("AI识别")
+
+            Button {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    dashboardSelectedImage = nil
+                    showingDashboardCamera = true
+                } else {
+                    showingDashboardCameraAlert = true
+                }
+            } label: {
+                Image(systemName: "camera.fill")
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .accessibilityLabel("拍照识别")
+
+            PhotosPicker(selection: $dashboardSelectedPhoto, matching: .images) {
+                Image(systemName: "photo.fill")
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .accessibilityLabel("从相册选择照片")
+        }
+        .foodSearchBarSurface()
+        .onChange(of: dashboardSelectedImage) { _, image in
+            if image != nil && !showingDashboardCamera {
+                presentFoodInput(autoStartRecognition: false)
+            }
+        }
+        .onChange(of: showingDashboardCamera) { _, isPresented in
+            if !isPresented, dashboardSelectedImage != nil {
+                presentFoodInput(autoStartRecognition: false)
+            }
+        }
+    }
+
+    private var canRecognizeFromDashboardSearch: Bool {
+        !dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || dashboardSelectedImage != nil
+    }
+
+    private func presentFoodInput(autoStartRecognition: Bool) {
+        guard autoStartRecognition == false || canRecognizeFromDashboardSearch else {
+            isDashboardSearchFocused = true
+            return
+        }
+
+        isDashboardSearchFocused = false
+        shouldAutoStartFoodRecognition = autoStartRecognition
+        showingFoodInput = true
     }
 
     private var metabolismCard: some View {
@@ -198,7 +333,7 @@ struct DashboardView: View {
                 VStack(spacing: 4) {
                     Image(systemName: "flame.fill")
                         .font(.title2)
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(.red)
                     Text("\(Int(totalCaloriesBurned))")
                         .font(.title3)
                         .fontWeight(.bold)
@@ -210,7 +345,7 @@ struct DashboardView: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
@@ -260,11 +395,10 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 40)
-                    .background(Color(.systemBackground))
+                    .background(AppSurfaceStyle.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 FoodListView()
-                    .frame(minHeight: 200)
             }
         }
     }
