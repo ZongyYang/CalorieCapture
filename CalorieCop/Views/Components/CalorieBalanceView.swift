@@ -28,12 +28,36 @@ enum AppSurfaceStyle {
             : UIColor.systemGray5
     })
 
-    // Form controls remain black in dark mode, while light mode gets a
-    // subtle gray inset so white cards remain visually separated.
+    // Form controls sit one level above the card in dark mode, while light
+    // mode gets a subtle gray inset so white cards remain visually separated.
     static let formInputBackground = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark
-            ? UIColor.systemBackground
+            ? UIColor.systemGray5
             : UIColor.systemGray6
+    })
+
+    static let formSecondaryText = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(white: 0.74, alpha: 1)
+            : UIColor.secondaryLabel
+    })
+
+    static let formTertiaryText = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(white: 0.58, alpha: 1)
+            : UIColor.tertiaryLabel
+    })
+
+    static let cardBorder = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.1)
+            : UIColor.black.withAlphaComponent(0.05)
+    })
+
+    static let inputBorder = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.04)
     })
 }
 

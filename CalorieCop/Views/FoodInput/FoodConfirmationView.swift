@@ -135,6 +135,7 @@ struct FoodConfirmationView: View {
                 }
                 .padding()
             }
+            .background(AppSurfaceStyle.pageBackground)
             .navigationTitle("识别结果")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -343,7 +344,7 @@ struct FoodConfirmationView: View {
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
                     .frame(maxWidth: 240)
-                    .background(Color(.systemBackground).opacity(0.85))
+                    .background(AppSurfaceStyle.formInputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay {
                         RoundedRectangle(cornerRadius: 10)
@@ -370,12 +371,12 @@ struct FoodConfirmationView: View {
                         .focused($focusedField, equals: .grams)
                         .frame(width: 76)
                     Text(quantityUnit)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 }
                 .font(.headline)
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
-                .background(Color(.systemBackground).opacity(0.85))
+                .background(AppSurfaceStyle.formInputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay {
                     RoundedRectangle(cornerRadius: 10)
@@ -387,7 +388,7 @@ struct FoodConfirmationView: View {
                     Text(quantityUnit)
                 }
                 .font(.headline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     beginEditing(.grams)
@@ -396,20 +397,25 @@ struct FoodConfirmationView: View {
 
             Text("原始输入: \(rawInput)")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(AppSurfaceStyle.formTertiaryText)
 
             BrandAutocompleteField(
                 text: $brand,
                 brands: knownBrands,
-                inputBackground: Color(.systemBackground).opacity(0.85),
+                inputBackground: AppSurfaceStyle.formInputBackground,
                 textAlignment: .center
             )
                 .frame(maxWidth: 240)
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, x: 0, y: 2)
     }
 
     private var nutritionSection: some View {
@@ -478,7 +484,7 @@ struct FoodConfirmationView: View {
         return HStack {
             Text(title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
             Spacer()
             Text("\(unitValue.formattedGrams) \(unit)/100\(quantityUnit)")
                 .font(.caption)
@@ -487,8 +493,12 @@ struct FoodConfirmationView: View {
                 .minimumScaleFactor(0.75)
         }
         .padding(10)
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.formInputBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(AppSurfaceStyle.inputBorder, lineWidth: 1)
+        }
     }
 
     @ViewBuilder
@@ -503,7 +513,7 @@ struct FoodConfirmationView: View {
             VStack(spacing: 4) {
                 Text(title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
                 HStack(spacing: 2) {
                     TextField("0", text: value)
@@ -516,7 +526,7 @@ struct FoodConfirmationView: View {
 
                     Text(unit)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -550,7 +560,7 @@ struct FoodConfirmationView: View {
                 Text("类型")
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
                 Picker("类型", selection: $category) {
                     ForEach(FoodEntryCategory.allCases) { category in
@@ -566,7 +576,7 @@ struct FoodConfirmationView: View {
                     Text("餐次")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
                     Picker("餐次", selection: $mealType) {
                         ForEach(FoodMealType.allCases) { mealType in
@@ -580,8 +590,13 @@ struct FoodConfirmationView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, x: 0, y: 2)
     }
 
     private func notesSection(_ notes: String) -> some View {
@@ -591,12 +606,17 @@ struct FoodConfirmationView: View {
 
             Text(notes)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, x: 0, y: 2)
     }
 
     private var confidenceIndicator: some View {
@@ -605,7 +625,7 @@ struct FoodConfirmationView: View {
                 .foregroundStyle(confidenceColor)
             Text("置信度: \(confidenceText)")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
             if hasManualChanges {
                 Text("(手动调整)")
@@ -655,13 +675,13 @@ struct FoodConfirmationView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("当我说...")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 TextField("关键词，如：咖啡牛奶", text: $preferenceKeyword)
                     .textFieldStyle(.roundedBorder)
 
                 Text("默认是指...")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 TextField("描述，如：150ml全脂牛奶", text: $preferenceDescription)
                     .textFieldStyle(.roundedBorder)
 
@@ -682,7 +702,7 @@ struct FoodConfirmationView: View {
                                 : "当前使用该习惯已保存的名称、品牌和营养数据。"
                         )
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
                         Toggle("添加为新的食物习惯", isOn: $addAsNewPreference)
                             .font(.subheadline)
@@ -690,7 +710,7 @@ struct FoodConfirmationView: View {
                 } else {
                     Label("尚未保存到食物习惯，可新建习惯", systemImage: "heart")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 }
             }
             .padding(.top, 4)
@@ -702,8 +722,13 @@ struct FoodConfirmationView: View {
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, x: 0, y: 2)
     }
 
     private var actionSection: some View {
@@ -752,7 +777,7 @@ struct EditableNutritionCard: View {
         VStack(spacing: 4) {
             Text(title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
             HStack(spacing: 2) {
                 TextField("0", text: $value)
@@ -764,7 +789,7 @@ struct EditableNutritionCard: View {
 
                 Text(unit)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
             }
         }
         .frame(maxWidth: .infinity)

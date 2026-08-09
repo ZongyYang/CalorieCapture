@@ -351,8 +351,12 @@ struct FoodInputView: View {
                     )
             }
             .padding()
-            .background(Color(.systemGray6))
+            .background(AppSurfaceStyle.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(AppSurfaceStyle.inputBorder, lineWidth: 1)
+            }
 
             Button {
                 showingSettings = true
@@ -452,7 +456,7 @@ struct FoodInputView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 220)
-                .background(Color(.systemGray6))
+                .background(AppSurfaceStyle.formInputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay {
                     RoundedRectangle(cornerRadius: 12)
@@ -476,7 +480,7 @@ struct FoodInputView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
-                        .background(Color(.systemGray6))
+                        .background(AppSurfaceStyle.formInputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
 
@@ -490,7 +494,7 @@ struct FoodInputView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
-                        .background(Color(.systemGray6))
+                        .background(AppSurfaceStyle.formInputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
@@ -525,7 +529,7 @@ struct FoodInputView: View {
         return TextField(placeholder, text: $inputText, axis: .vertical)
             .textFieldStyle(.plain)
             .padding()
-            .background(Color(.systemGray6))
+            .background(AppSurfaceStyle.formInputBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .lineLimit(3...6)
     }
@@ -730,13 +734,17 @@ struct FoodInputView: View {
         .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
     }
 
     private func manualPickerLabel(_ title: String) -> some View {
         Text(title)
             .font(.caption)
             .fontWeight(.medium)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(AppSurfaceStyle.formSecondaryText)
     }
 
     private func manualNumberField(
@@ -758,7 +766,7 @@ struct FoodInputView: View {
                 .frame(width: 90)
 
             Text(unit)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 .frame(width: 82, alignment: .leading)
         }
         .padding(12)
@@ -1674,6 +1682,10 @@ struct SavedPreferenceSuggestionPanel: View {
         .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
     }
 }
 
@@ -1972,7 +1984,7 @@ struct FoodPreferenceEditView: View {
         self.onRecordIntake = onRecordIntake
         _foodName = State(initialValue: preference.keyword)
         _brand = State(initialValue: preference.brand ?? "")
-        _intakeQuantity = State(initialValue: "")
+        _intakeQuantity = State(initialValue: Self.initialIntakeQuantity(for: preference))
         _totalQuantity = State(initialValue: Self.formatted(preference.defaultGrams))
         _totalCalories = State(
             initialValue: Self.formatted(
@@ -2337,7 +2349,7 @@ struct FoodPreferenceEditView: View {
         Text(title)
             .font(.caption)
             .fontWeight(.medium)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(AppSurfaceStyle.formSecondaryText)
     }
 
     private var preferenceEditInputBackground: Color {
@@ -2360,7 +2372,7 @@ struct FoodPreferenceEditView: View {
                 .focused($focusedField, equals: field)
                 .frame(width: 90)
             Text(unit)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 .frame(width: 92, alignment: .leading)
         }
         .padding(12)
@@ -2724,6 +2736,17 @@ struct FoodPreferenceEditView: View {
     private static func formatted(_ value: Double?, decimals: Int = 1) -> String {
         guard let value else { return "" }
         return String(format: "%.\(decimals)f", value)
+    }
+
+    private static func initialIntakeQuantity(for preference: FoodPreference) -> String {
+        if let defaultGrams = preference.defaultGrams, defaultGrams > 0 {
+            return formatted(defaultGrams)
+        }
+
+        // Older habits may have unit nutrition data but no saved serving size.
+        // Start from one standard 100 g / 100 ml reference so the action is
+        // immediately available while keeping the quantity editable.
+        return preference.resolvedCaloriesPer100 != nil ? "100" : ""
     }
 
     private static func trimmedNumber(_ value: Double) -> String {
@@ -3587,7 +3610,7 @@ struct BrandAutocompleteField: View {
     let brands: [String]
     var placeholder = "品牌"
     var style: BrandAutocompleteStyle = .inset
-    var inputBackground = Color(.systemBackground)
+    var inputBackground = AppSurfaceStyle.formInputBackground
     var textAlignment: TextAlignment = .leading
 
     @FocusState private var isFocused: Bool
@@ -3644,7 +3667,7 @@ struct BrandAutocompleteField: View {
                                     .lineLimit(1)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
-                                    .background(Color(.systemGray5))
+                                    .background(AppSurfaceStyle.formInputBackground)
                                     .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)
