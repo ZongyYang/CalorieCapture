@@ -1,6 +1,13 @@
 import SwiftUI
 
 enum AppSurfaceStyle {
+    // Form pages use a clean light canvas with darker grouped modules layered on top.
+    static let formPageBackground = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.black
+            : UIColor.systemBackground
+    })
+
     static let pageBackground = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark
             ? UIColor.black
@@ -19,6 +26,14 @@ enum AppSurfaceStyle {
         traits.userInterfaceStyle == .dark
             ? UIColor.systemGray6
             : UIColor.systemGray5
+    })
+
+    // Form controls remain black in dark mode, while light mode gets a
+    // subtle gray inset so white cards remain visually separated.
+    static let formInputBackground = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.systemBackground
+            : UIColor.systemGray6
     })
 }
 

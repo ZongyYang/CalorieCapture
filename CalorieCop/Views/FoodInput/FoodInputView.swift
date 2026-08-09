@@ -46,6 +46,7 @@ struct FoodInputView: View {
         self.autoStartRecognition = autoStartRecognition
         self.onSaved = onSaved
         _inputText = State(initialValue: initialSearchText)
+        _preferenceSearchText = State(initialValue: initialSearchText)
         _selectedImage = State(initialValue: initialImage)
     }
 
@@ -183,6 +184,7 @@ struct FoodInputView: View {
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
             }
+            .background(AppSurfaceStyle.pageBackground)
             .scrollDismissesKeyboard(.interactively)
             .onTapGesture {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
@@ -495,6 +497,10 @@ struct FoodInputView: View {
                 .foregroundStyle(.primary)
             }
         }
+        .padding(14)
+        .background(AppSurfaceStyle.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 
     private func dividerWithText(_ text: String) -> some View {
@@ -568,13 +574,14 @@ struct FoodInputView: View {
                     TextField("食物名称，例如：鸡胸肉", text: $manualFoodName)
                         .textFieldStyle(.plain)
                         .padding(12)
-                        .background(Color(.systemBackground))
+                        .background(AppSurfaceStyle.formInputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .submitLabel(.next)
 
                     BrandAutocompleteField(
                         text: $manualBrand,
-                        brands: knownBrands
+                        brands: knownBrands,
+                        inputBackground: AppSurfaceStyle.formInputBackground
                     )
                 }
             }
@@ -720,8 +727,9 @@ struct FoodInputView: View {
             content()
         }
         .padding(14)
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 
     private func manualPickerLabel(_ title: String) -> some View {
@@ -754,7 +762,7 @@ struct FoodInputView: View {
                 .frame(width: 82, alignment: .leading)
         }
         .padding(12)
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.formInputBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -917,6 +925,12 @@ struct FoodInputView: View {
         return filteredPreferences
     }
 
+    private var savedPreferenceSuggestions: [FoodPreference] {
+        let query = preferenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        return Array(filteredPreferences.prefix(3))
+    }
+
     private var savedPreferencesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
@@ -990,6 +1004,18 @@ struct FoodInputView: View {
 
             }
             .foodSearchBarSurface()
+
+            if !savedPreferenceSuggestions.isEmpty {
+                SavedPreferenceSuggestionPanel(
+                    preferences: savedPreferenceSuggestions,
+                    onSelect: { preference in
+                        editingPreference = EditingPreference(preference)
+                    },
+                    onRecord: { preference in
+                        quickRecordPreference(preference)
+                    }
+                )
+            }
         }
     }
 
@@ -1584,6 +1610,73 @@ struct FoodInputView: View {
     }
 }
 
+struct SavedPreferenceSuggestionPanel: View {
+    let preferences: [FoodPreference]
+    let onSelect: (FoodPreference) -> Void
+    let onRecord: (FoodPreference) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("已保存习惯", systemImage: "heart.fill")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .foregroundStyle(.pink)
+
+            ForEach(preferences, id: \.id) { preference in
+                HStack(spacing: 10) {
+                    Button {
+                        onSelect(preference)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(preference.keyword)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+
+                            HStack(spacing: 6) {
+                                if let brand = preference.brand, !brand.isEmpty {
+                                    Text(brand)
+                                }
+                                if !preference.defaultDescription.isEmpty {
+                                    Text(preference.defaultDescription)
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onRecord(preference)
+                    } label: {
+                        Text("记录")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.blue)
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 7)
+                            .background(Color.blue.opacity(0.12))
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
+                .background(AppSurfaceStyle.formInputBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+        }
+        .padding(12)
+        .background(AppSurfaceStyle.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+    }
+}
+
 struct FoodPreferencesSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \FoodPreference.usageCount, order: .reverse) private var foodPreferences: [FoodPreference]
@@ -1959,7 +2052,7 @@ struct FoodPreferenceEditView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 20) {
                     AIRecognitionActionBar(
                         isProcessing: isProcessingAI,
                         onRecognize: { recognizeWithAI(image: selectedImage) },
@@ -2235,8 +2328,9 @@ struct FoodPreferenceEditView: View {
             content()
         }
         .padding(14)
-        .background(AppSurfaceStyle.moduleBackground)
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 
     private func preferenceEditLabel(_ title: String) -> some View {
@@ -2247,9 +2341,7 @@ struct FoodPreferenceEditView: View {
     }
 
     private var preferenceEditInputBackground: Color {
-        Color(UIColor { traitCollection in
-            traitCollection.userInterfaceStyle == .dark ? .black : .systemBackground
-        })
+        AppSurfaceStyle.formInputBackground
     }
 
     @ViewBuilder

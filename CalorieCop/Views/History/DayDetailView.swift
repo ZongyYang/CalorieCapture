@@ -186,7 +186,7 @@ struct DayDetailView: View {
                     }
                 }
                 .padding()
-                .background(Color(.systemBackground))
+                .background(AppSurfaceStyle.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 16))
                 .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
 
@@ -927,7 +927,7 @@ private struct DailyBriefingPreviewCard: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
@@ -1920,7 +1920,7 @@ struct FoodEntryEditView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 20) {
                     AIRecognitionActionBar(
                         isProcessing: isProcessingAI,
                         onRecognize: { recognizeWithAI(image: selectedImage) },
@@ -2211,6 +2211,7 @@ struct FoodEntryEditView: View {
                         .foregroundStyle(isSavedAsPreference ? .white : .pink)
                         .background(isSavedAsPreference ? Color.pink : AppSurfaceStyle.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
                     }
 
                     if let errorMessage {
@@ -2325,6 +2326,7 @@ struct FoodEntryEditView: View {
         .padding(14)
         .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 
     private func editPickerLabel(_ title: String) -> some View {
@@ -2335,9 +2337,7 @@ struct FoodEntryEditView: View {
     }
 
     private var editInputBackground: Color {
-        Color(UIColor { traitCollection in
-            traitCollection.userInterfaceStyle == .dark ? .black : .systemBackground
-        })
+        AppSurfaceStyle.formInputBackground
     }
 
     private func numberField(title: String, text: Binding<String>, unit: String, isRequired: Bool = false) -> some View {

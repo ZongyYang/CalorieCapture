@@ -9,6 +9,9 @@ struct DashboardView: View {
     @Query(sort: \FoodEntry.createdAt, order: .reverse)
     private var allEntries: [FoodEntry]
 
+    @Query(sort: \FoodPreference.usageCount, order: .reverse)
+    private var foodPreferences: [FoodPreference]
+
     @Query private var goals: [UserGoal]
     @Query(sort: \WeightEntry.date, order: .reverse) private var manualWeightEntries: [WeightEntry]
 
@@ -23,6 +26,7 @@ struct DashboardView: View {
     @State private var dashboardSelectedPhoto: PhotosPickerItem?
     @State private var isDashboardSearchFocused = false
     @State private var shouldAutoStartFoodRecognition = false
+    @State private var dashboardQuickRecordMessage: String?
 
     private var currentGoal: UserGoal? { goals.first }
 
@@ -94,6 +98,26 @@ struct DashboardView: View {
     private var targetDeficit: Double? {
         guard let goal = currentGoal, let weight = currentWeight else { return nil }
         return goal.plannedDailyDeficit(currentWeight: weight)
+    }
+
+    private var savedPreferenceSuggestions: [FoodPreference] {
+        let query = dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+
+        return Array(
+            foodPreferences
+                .filter {
+                    $0.keyword.localizedCaseInsensitiveContains(query)
+                        || ($0.brand?.localizedCaseInsensitiveContains(query) ?? false)
+                }
+                .sorted { lhs, rhs in
+                    if lhs.usageCount != rhs.usageCount {
+                        return lhs.usageCount > rhs.usageCount
+                    }
+                    return lhs.createdAt > rhs.createdAt
+                }
+                .prefix(3)
+        )
     }
 
     var body: some View {
@@ -178,14 +202,34 @@ struct DashboardView: View {
     }
 
     private var calorieBalanceSection: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 12) {
+            foodSearchSection
+
+            if !savedPreferenceSuggestions.isEmpty {
+                SavedPreferenceSuggestionPanel(
+                    preferences: savedPreferenceSuggestions,
+                    onSelect: { preference in
+                        dashboardSearchText = preference.keyword
+                        presentFoodInput(autoStartRecognition: false)
+                    },
+                    onRecord: { preference in
+                        quickRecordPreference(preference)
+                    }
+                )
+            }
+
+            if let dashboardQuickRecordMessage {
+                Label(dashboardQuickRecordMessage, systemImage: "checkmark.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
             CalorieBalanceView(
                 consumed: totalCaloriesConsumed,
                 burned: totalCaloriesBurned,
                 targetDeficit: targetDeficit
-            ) {
-                foodSearchSection
-            }
+            )
             .id(goalRefreshTrigger)
 
             if hasHealthKitCalories {
@@ -293,6 +337,99 @@ struct DashboardView: View {
         isDashboardSearchFocused = false
         shouldAutoStartFoodRecognition = autoStartRecognition
         showingFoodInput = true
+    }
+
+    private func quickRecordPreference(_ preference: FoodPreference) {
+        guard let nutrition = quickRecordNutrition(from: preference) else {
+            let message = "\(preference.keyword)缺少可记录的热量数据，请先编辑食物习惯。"
+            withAnimation(.easeInOut(duration: 0.18)) {
+                dashboardQuickRecordMessage = message
+            }
+            return
+        }
+
+        let entryDate = Date()
+        let entry = FoodEntry(
+            rawInput: "已保存习惯: \(preference.keyword)",
+            foodName: nutrition.foodName,
+            brand: nutrition.brand,
+            grams: nutrition.grams,
+            calories: nutrition.calories,
+            protein: nutrition.protein,
+            carbohydrates: nutrition.carbohydrates,
+            fat: nutrition.fat,
+            date: entryDate,
+            category: preference.category,
+            mealType: preference.category == .meal ? FoodMealType.defaultType(for: entryDate) : nil,
+            energyUnit: preference.energyUnit
+        )
+
+        preference.usageCount += 1
+        modelContext.insert(entry)
+        try? modelContext.save()
+        dashboardSearchText = ""
+
+        let message = "已记录 \(preference.keyword)"
+        withAnimation(.easeInOut(duration: 0.18)) {
+            dashboardQuickRecordMessage = message
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard dashboardQuickRecordMessage == message else { return }
+            withAnimation(.easeInOut(duration: 0.18)) {
+                dashboardQuickRecordMessage = nil
+            }
+        }
+    }
+
+    private func quickRecordNutrition(from preference: FoodPreference) -> NutritionInfo? {
+        if let quantity = preference.defaultGrams, quantity > 0,
+           let caloriesPer100 = preference.resolvedCaloriesPer100 {
+            let scale = quantity / 100
+            return NutritionInfo(
+                foodName: preference.keyword,
+                brand: preference.brand,
+                grams: quantity,
+                calories: caloriesPer100 * scale,
+                protein: (preference.resolvedProteinPer100 ?? 0) * scale,
+                carbohydrates: (preference.resolvedCarbsPer100 ?? 0) * scale,
+                fat: (preference.resolvedFatPer100 ?? 0) * scale,
+                confidence: "saved",
+                notes: "从已保存习惯快速记录",
+                daysAgo: 0
+            )
+        }
+
+        if let calories = preference.defaultCalories {
+            return NutritionInfo(
+                foodName: preference.keyword,
+                brand: preference.brand,
+                grams: preference.defaultGrams ?? 0,
+                calories: calories,
+                protein: preference.defaultProtein ?? 0,
+                carbohydrates: preference.defaultCarbs ?? 0,
+                fat: preference.defaultFat ?? 0,
+                confidence: "saved",
+                notes: "从已保存习惯快速记录",
+                daysAgo: 0
+            )
+        }
+
+        guard let caloriesPer100 = preference.resolvedCaloriesPer100 else {
+            return nil
+        }
+
+        return NutritionInfo(
+            foodName: preference.keyword,
+            brand: preference.brand,
+            grams: 100,
+            calories: caloriesPer100,
+            protein: preference.resolvedProteinPer100 ?? 0,
+            carbohydrates: preference.resolvedCarbsPer100 ?? 0,
+            fat: preference.resolvedFatPer100 ?? 0,
+            confidence: "saved",
+            notes: "从已保存习惯按单位基准快速记录",
+            daysAgo: 0
+        )
     }
 
     private var metabolismCard: some View {
