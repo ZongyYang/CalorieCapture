@@ -2,6 +2,16 @@ import SwiftUI
 import SwiftData
 import PhotosUI
 
+private struct DashboardEditingPreference: Identifiable {
+    let id: UUID
+    let preference: FoodPreference
+
+    init(_ preference: FoodPreference) {
+        self.id = preference.id
+        self.preference = preference
+    }
+}
+
 struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var healthKitService = HealthKitService()
@@ -19,6 +29,7 @@ struct DashboardView: View {
     @State private var showingAIAdvisor = false
     @State private var showingSettings = false
     @State private var showingFoodInput = false
+    @State private var editingPreference: DashboardEditingPreference?
     @State private var showingDashboardCamera = false
     @State private var showingDashboardCameraAlert = false
     @State private var dashboardSearchText = ""
@@ -27,6 +38,16 @@ struct DashboardView: View {
     @State private var isDashboardSearchFocused = false
     @State private var shouldAutoStartFoodRecognition = false
     @State private var dashboardQuickRecordMessage: String?
+    @State private var isDashboardRecognizing = false
+    @State private var dashboardRecognitionNutrition: NutritionInfo?
+    @State private var dashboardRecognitionList: [NutritionInfo] = []
+    @State private var dashboardRecognitionRawInput = ""
+    @State private var showingDashboardRecognitionResult = false
+    @State private var showingDashboardMultipleRecognitionResult = false
+    @State private var dashboardRecognitionError: String?
+    @State private var pendingPreferenceDeletionIDs: Set<UUID> = []
+
+    private let aiService = MiniMaxService()
 
     private var currentGoal: UserGoal? { goals.first }
 
@@ -120,22 +141,30 @@ struct DashboardView: View {
         )
     }
 
+    private var isDashboardSearchMode: Bool {
+        isDashboardSearchFocused
+            || !dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 20) {
                     calorieBalanceSection
 
-                    metabolismCard
+                    if !isDashboardSearchMode {
+                        metabolismCard
 
-                    macroNutrientsSection
+                        macroNutrientsSection
 
-                    foodListSection
+                        foodListSection
+                    }
                 }
                 .padding()
+                .animation(.easeInOut(duration: 0.2), value: isDashboardSearchMode)
             }
             .background(AppSurfaceStyle.pageBackground)
-            .navigationTitle("今日概览")
+            .navigationTitle("今日")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     AIAdvisorToolbarButton(isPresented: $showingAIAdvisor)
@@ -168,6 +197,42 @@ struct DashboardView: View {
                     showingFoodInput = false
                 }
             }
+            .sheet(
+                isPresented: $showingDashboardRecognitionResult,
+                onDismiss: finishDashboardRecognitionFlow
+            ) {
+                if let nutrition = dashboardRecognitionNutrition {
+                    FoodConfirmationView(
+                        rawInput: dashboardRecognitionRawInput,
+                        originalNutrition: nutrition
+                    ) { editedNutrition, category, mealType in
+                        saveDashboardRecognizedFood(
+                            editedNutrition,
+                            category: category,
+                            mealType: mealType
+                        )
+                    }
+                }
+            }
+            .sheet(
+                isPresented: $showingDashboardMultipleRecognitionResult,
+                onDismiss: finishDashboardRecognitionFlow
+            ) {
+                MultipleFoodConfirmationView(
+                    nutritionList: dashboardRecognitionList,
+                    onConfirm: saveDashboardRecognizedFoods
+                )
+            }
+            .sheet(item: $editingPreference, onDismiss: {
+                dashboardSearchText = ""
+            }) { item in
+                FoodPreferenceEditView(
+                    preference: item.preference,
+                    onRecordIntake: { nutrition in
+                        recordPreferenceIntake(from: item.preference, nutrition: nutrition)
+                    }
+                )
+            }
             .sheet(isPresented: $showingDashboardCamera) {
                 CameraView(image: $dashboardSelectedImage)
             }
@@ -175,6 +240,21 @@ struct DashboardView: View {
                 Button("好的", role: .cancel) {}
             } message: {
                 Text("请在真机上使用相机功能，或从相册选择图片。")
+            }
+            .alert(
+                "AI 识别失败",
+                isPresented: Binding(
+                    get: { dashboardRecognitionError != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            dashboardRecognitionError = nil
+                        }
+                    }
+                )
+            ) {
+                Button("好的", role: .cancel) {}
+            } message: {
+                Text(dashboardRecognitionError ?? "请稍后重试。")
             }
             .onChange(of: dashboardSelectedPhoto) {
                 Task {
@@ -199,118 +279,155 @@ struct DashboardView: View {
                 goalRefreshTrigger = UUID()
             }
         }
+        .onChange(of: isDashboardSearchMode) { wasSearching, isSearching in
+            if wasSearching && !isSearching {
+                commitPendingPreferenceDeletions()
+            }
+        }
+        .onDisappear {
+            commitPendingPreferenceDeletions()
+        }
     }
 
     private var calorieBalanceSection: some View {
         VStack(spacing: 12) {
             foodSearchSection
 
-            if !savedPreferenceSuggestions.isEmpty {
-                SavedPreferenceSuggestionPanel(
-                    preferences: savedPreferenceSuggestions,
-                    onSelect: { preference in
-                        dashboardSearchText = preference.keyword
-                        presentFoodInput(autoStartRecognition: false)
-                    },
-                    onRecord: { preference in
-                        quickRecordPreference(preference)
-                    }
-                )
-            }
-
-            if let dashboardQuickRecordMessage {
+            if !isDashboardSearchMode, let dashboardQuickRecordMessage {
                 Label(dashboardQuickRecordMessage, systemImage: "checkmark.circle.fill")
                     .font(.caption)
                     .foregroundStyle(.green)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            CalorieBalanceView(
-                consumed: totalCaloriesConsumed,
-                burned: totalCaloriesBurned,
-                targetDeficit: targetDeficit
-            )
-            .id(goalRefreshTrigger)
-
-            if hasHealthKitCalories {
-                Text("来自健康 App 今日能量数据")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("暂无健康 App 今日能量数据")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            if !isDashboardSearchMode {
+                CalorieBalanceView(
+                    consumed: totalCaloriesConsumed,
+                    burned: totalCaloriesBurned,
+                    targetDeficit: targetDeficit
+                )
+                .id(goalRefreshTrigger)
             }
+
         }
     }
 
     private var foodSearchSection: some View {
-        HStack(spacing: 8) {
-            ImagePasteTextField(
-                text: $dashboardSearchText,
-                placeholder: "搜索习惯或输入食物",
-                returnKeyType: .search,
-                focusBinding: $isDashboardSearchFocused,
-                onSubmit: {
-                    presentFoodInput(autoStartRecognition: true)
-                },
-                onPasteImage: { image in
-                    dashboardSelectedImage = image
-                },
-                onPasteFailure: {}
-            )
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    ImagePasteTextField(
+                        text: $dashboardSearchText,
+                        placeholder: "搜索习惯或输入食物",
+                        returnKeyType: .search,
+                        focusBinding: $isDashboardSearchFocused,
+                        onSubmit: {
+                            recognizeFromDashboardSearch()
+                        },
+                        onPasteImage: { image in
+                            dashboardSelectedImage = image
+                        },
+                        onPasteFailure: {}
+                    )
 
-            if !dashboardSearchText.isEmpty {
-                Button {
-                    dashboardSearchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
+                    if !dashboardSearchText.isEmpty {
+                        Button {
+                            dashboardSearchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    Divider()
+                        .frame(height: 22)
+
+                    if isDashboardRecognizing {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 30, height: 30)
+                            .accessibilityLabel("正在识别")
+                    } else {
+                        Button {
+                            recognizeFromDashboardSearch()
+                        } label: {
+                            Image(systemName: "sparkles")
+                                .frame(width: 30, height: 30)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.primary)
+                        .opacity(canRecognizeFromDashboardSearch ? 1 : 0.45)
+                        .accessibilityLabel("AI识别")
+                    }
+
+                    Button {
+                        if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                            dashboardSelectedImage = nil
+                            showingDashboardCamera = true
+                        } else {
+                            showingDashboardCameraAlert = true
+                        }
+                    } label: {
+                        Image(systemName: "camera.fill")
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                    .accessibilityLabel("拍照识别")
+
+                    PhotosPicker(selection: $dashboardSelectedPhoto, matching: .images) {
+                        Image(systemName: "photo.fill")
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                    .accessibilityLabel("从相册选择照片")
                 }
-                .buttonStyle(.plain)
-            }
+                .frame(maxWidth: .infinity)
+                .foodSearchBarSurface()
 
-            Divider()
-                .frame(height: 22)
-
-            Button {
-                presentFoodInput(autoStartRecognition: true)
-            } label: {
-                Image(systemName: "sparkles")
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-            .opacity(canRecognizeFromDashboardSearch ? 1 : 0.45)
-            .accessibilityLabel("AI识别")
-
-            Button {
-                if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    dashboardSelectedImage = nil
-                    showingDashboardCamera = true
-                } else {
-                    showingDashboardCameraAlert = true
+                if isDashboardSearchMode {
+                    Button("取消") {
+                        commitPendingPreferenceDeletions()
+                        dashboardSearchText = ""
+                        isDashboardSearchFocused = false
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.tint)
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
                 }
-            } label: {
-                Image(systemName: "camera.fill")
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-            .accessibilityLabel("拍照识别")
 
-            PhotosPicker(selection: $dashboardSelectedPhoto, matching: .images) {
-                Image(systemName: "photo.fill")
-                    .frame(width: 30, height: 30)
-                    .contentShape(Rectangle())
+            if !savedPreferenceSuggestions.isEmpty {
+                SavedPreferenceSuggestionPanel(
+                    preferences: savedPreferenceSuggestions,
+                    pendingDeletionIDs: pendingPreferenceDeletionIDs,
+                    onSelect: { preference in
+                        editingPreference = DashboardEditingPreference(preference)
+                    },
+                    onToggleSaved: { preference in
+                        togglePendingPreferenceDeletion(preference)
+                    },
+                    onRecord: { preference in
+                        quickRecordPreference(preference)
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-            .accessibilityLabel("从相册选择照片")
         }
-        .foodSearchBarSurface()
+        .animation(
+            .easeInOut(duration: 0.2),
+            value: isDashboardSearchMode
+        )
+        .animation(
+            .easeInOut(duration: 0.2),
+            value: savedPreferenceSuggestions.map { $0.id }
+        )
         .onChange(of: dashboardSelectedImage) { _, image in
             if image != nil && !showingDashboardCamera {
                 presentFoodInput(autoStartRecognition: false)
@@ -328,6 +445,32 @@ struct DashboardView: View {
             || dashboardSelectedImage != nil
     }
 
+    private func togglePendingPreferenceDeletion(_ preference: FoodPreference) {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            if pendingPreferenceDeletionIDs.contains(preference.id) {
+                pendingPreferenceDeletionIDs.remove(preference.id)
+            } else {
+                pendingPreferenceDeletionIDs.insert(preference.id)
+            }
+        }
+    }
+
+    private func commitPendingPreferenceDeletions() {
+        guard !pendingPreferenceDeletionIDs.isEmpty else { return }
+
+        let pendingIDs = pendingPreferenceDeletionIDs
+        for preference in foodPreferences where pendingIDs.contains(preference.id) {
+            modelContext.delete(preference)
+        }
+
+        do {
+            try modelContext.save()
+            pendingPreferenceDeletionIDs.removeAll()
+        } catch {
+            dashboardQuickRecordMessage = "删除食物习惯失败：\(error.localizedDescription)"
+        }
+    }
+
     private func presentFoodInput(autoStartRecognition: Bool) {
         guard autoStartRecognition == false || canRecognizeFromDashboardSearch else {
             isDashboardSearchFocused = true
@@ -339,6 +482,114 @@ struct DashboardView: View {
         showingFoodInput = true
     }
 
+    private func recognizeFromDashboardSearch() {
+        guard !isDashboardRecognizing else { return }
+
+        let input = dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !input.isEmpty else {
+            isDashboardSearchFocused = true
+            return
+        }
+
+        guard APIKeyManager.isDeepSeekConfigured
+                || APIKeyManager.isMiniMaxConfigured
+                || APIKeyManager.isQwenConfigured else {
+            dashboardRecognitionError = "文字解析需要设置 DeepSeek、MiniMax 或 Qwen API 密钥。"
+            return
+        }
+
+        isDashboardSearchFocused = false
+        dashboardRecognitionRawInput = input
+        isDashboardRecognizing = true
+        dashboardRecognitionError = nil
+        UIApplication.shared.sendAction(
+            #selector(UIResponder.resignFirstResponder),
+            to: nil,
+            from: nil,
+            for: nil
+        )
+
+        Task {
+            do {
+                let nutritionList = try await aiService.parseFoodInputMultiple(
+                    input,
+                    preferences: foodPreferences
+                )
+
+                await MainActor.run {
+                    isDashboardRecognizing = false
+                    if nutritionList.count == 1 {
+                        dashboardRecognitionNutrition = nutritionList.first
+                        showingDashboardRecognitionResult = true
+                    } else if nutritionList.count > 1 {
+                        dashboardRecognitionList = nutritionList
+                        showingDashboardMultipleRecognitionResult = true
+                    } else {
+                        dashboardRecognitionError = "未能识别任何食物。"
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isDashboardRecognizing = false
+                    dashboardRecognitionError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func saveDashboardRecognizedFood(
+        _ nutrition: NutritionInfo,
+        category: FoodEntryCategory,
+        mealType: FoodMealType?
+    ) -> FoodEntry {
+        let entry = FoodEntry(
+            rawInput: dashboardRecognitionRawInput,
+            foodName: nutrition.foodName,
+            brand: nutrition.brand,
+            grams: nutrition.grams,
+            calories: nutrition.calories,
+            protein: nutrition.protein,
+            carbohydrates: nutrition.carbohydrates,
+            fat: nutrition.fat,
+            date: nutrition.entryDate,
+            category: category,
+            mealType: category == .meal ? mealType : nil,
+            energyUnit: .kilocalorie
+        )
+        modelContext.insert(entry)
+        try? modelContext.save()
+        return entry
+    }
+
+    private func saveDashboardRecognizedFoods(_ nutritionList: [NutritionInfo]) {
+        for nutrition in nutritionList {
+            let entryDate = nutrition.entryDate
+            let entry = FoodEntry(
+                rawInput: dashboardRecognitionRawInput,
+                foodName: nutrition.foodName,
+                brand: nutrition.brand,
+                grams: nutrition.grams,
+                calories: nutrition.calories,
+                protein: nutrition.protein,
+                carbohydrates: nutrition.carbohydrates,
+                fat: nutrition.fat,
+                date: entryDate,
+                category: .meal,
+                mealType: FoodMealType.defaultType(for: entryDate)
+            )
+            modelContext.insert(entry)
+        }
+        try? modelContext.save()
+    }
+
+    private func finishDashboardRecognitionFlow() {
+        dashboardSearchText = ""
+        dashboardRecognitionRawInput = ""
+        dashboardRecognitionNutrition = nil
+        dashboardRecognitionList = []
+        isDashboardSearchFocused = false
+    }
+
     private func quickRecordPreference(_ preference: FoodPreference) {
         guard let nutrition = quickRecordNutrition(from: preference) else {
             let message = "\(preference.keyword)缺少可记录的热量数据，请先编辑食物习惯。"
@@ -348,6 +599,11 @@ struct DashboardView: View {
             return
         }
 
+        recordPreferenceIntake(from: preference, nutrition: nutrition)
+    }
+
+    @discardableResult
+    private func recordPreferenceIntake(from preference: FoodPreference, nutrition: NutritionInfo) -> FoodEntry {
         let entryDate = Date()
         let entry = FoodEntry(
             rawInput: "已保存习惯: \(preference.keyword)",
@@ -379,6 +635,7 @@ struct DashboardView: View {
                 dashboardQuickRecordMessage = nil
             }
         }
+        return entry
     }
 
     private func quickRecordNutrition(from preference: FoodPreference) -> NutritionInfo? {
@@ -454,7 +711,7 @@ struct DashboardView: View {
 
                 // Activity calories
                 VStack(spacing: 4) {
-                    Image(systemName: "applewatch")
+                    Image(systemName: "figure.run")
                         .font(.title2)
                         .foregroundStyle(.green)
                     Text("\(Int(activeCalories))")

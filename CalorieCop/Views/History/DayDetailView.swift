@@ -143,7 +143,7 @@ struct DayDetailView: View {
                                 Label("静息 \(Int(energyBurned.restingCalories)) kcal", systemImage: "bed.double.fill")
                                     .foregroundStyle(.purple)
                                 Spacer()
-                                Label("活动 \(Int(energyBurned.activeCalories)) kcal", systemImage: "applewatch")
+                                Label("活动 \(Int(energyBurned.activeCalories)) kcal", systemImage: "figure.run")
                                     .foregroundStyle(.green)
                             }
                             .font(.caption)
@@ -225,6 +225,7 @@ struct DayDetailView: View {
                             showsPreferenceControl: true,
                             isSavedAsPreference: isSavedAsPreference(entry),
                             isAutofillingNutrition: autofillingNutritionEntryID == entry.id,
+                            inlineActionDeletes: true,
                             onEdit: {
                                 entryToEdit = entry
                             },
@@ -1199,6 +1200,7 @@ struct SwipeableFoodEntryRow: View {
     let showsPreferenceControl: Bool
     let isSavedAsPreference: Bool
     let isAutofillingNutrition: Bool
+    let inlineActionDeletes: Bool
     let onEdit: () -> Void
     let onTogglePreference: () -> Void
     let onAutofillNutrition: () -> Void
@@ -1249,7 +1251,9 @@ struct SwipeableFoodEntryRow: View {
                 isAutofillingNutrition: isAutofillingNutrition,
                 onTogglePreference: onTogglePreference,
                 onAutofillNutrition: onAutofillNutrition,
-                onEdit: onEdit
+                onEdit: onEdit,
+                inlineActionDeletes: inlineActionDeletes,
+                onDelete: onDelete
             )
             .offset(x: currentOffset)
             .contentShape(RoundedRectangle(cornerRadius: 16))
@@ -1293,6 +1297,8 @@ private struct FoodEntryDetailRow: View {
     let onTogglePreference: () -> Void
     let onAutofillNutrition: () -> Void
     let onEdit: () -> Void
+    let inlineActionDeletes: Bool
+    let onDelete: () -> Void
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -1364,16 +1370,20 @@ private struct FoodEntryDetailRow: View {
                     }
 
                     Button {
-                        onEdit()
+                        if inlineActionDeletes {
+                            onDelete()
+                        } else {
+                            onEdit()
+                        }
                     } label: {
-                        Image(systemName: "pencil")
-                            .font(.body)
-                            .foregroundStyle(.tertiary)
+                        Image(systemName: inlineActionDeletes ? "plus.circle.fill" : "pencil")
+                            .font(inlineActionDeletes ? .title2 : .body)
+                            .foregroundStyle(inlineActionDeletes ? Color.blue : Color.secondary)
                             .frame(width: 36, height: 36)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("编辑")
+                    .accessibilityLabel(inlineActionDeletes ? "删除记录摄入" : "编辑")
                 }
             }
         }
@@ -1488,6 +1498,7 @@ struct AIRecognitionActionBar: View {
 struct FoodSearchBarSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
+            .frame(minHeight: 30)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(Color(.systemGray5))
@@ -1810,6 +1821,10 @@ struct FoodEntryEditView: View {
     @State private var mergeTargetPreferenceID: UUID?
     @State private var mergePreferenceSearchText = ""
     @State private var isMergePreferenceListExpanded = false
+    @State private var isEntryRecorded = true
+    @State private var replacementRecordedEntry: FoodEntry?
+    @State private var recordedEntryDate = Date()
+    @State private var recordedEntryRawInput = ""
     @FocusState private var isMergePreferenceSearchFocused: Bool
 
     private let aiService = MiniMaxService()
@@ -2197,23 +2212,6 @@ struct FoodEntryEditView: View {
                         }
                     }
 
-                    if mergeTargetPreference == nil {
-                        Button {
-                            togglePreference()
-                        } label: {
-                            Label(isSavedAsPreference ? "取消保存习惯" : "保存习惯", systemImage: isSavedAsPreference ? "heart.fill" : "heart")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(isSavedAsPreference ? .white : .pink)
-                        .background(isSavedAsPreference ? Color.pink : AppSurfaceStyle.cardBackground)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
-                    }
-
                     if let errorMessage {
                         Text(errorMessage)
                             .font(.caption)
@@ -2223,6 +2221,46 @@ struct FoodEntryEditView: View {
                             .background(Color.red.opacity(0.1))
                             .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
+
+                    HStack(spacing: 12) {
+                        Button {
+                            toggleEntryIntake()
+                        } label: {
+                            Label("记录摄入", systemImage: "plus.circle.fill")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 13)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(isEntryRecorded ? Color.white : Color.secondary)
+                        .background(isEntryRecorded ? Color.blue : Color(.systemGray5))
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .accessibilityValue(isEntryRecorded ? "已记录，点击删除" : "未记录，点击添加")
+
+                        Button {
+                            togglePreference()
+                        } label: {
+                            Label(
+                                isSavedAsPreference ? "删除习惯" : "添加习惯",
+                                systemImage: isSavedAsPreference ? "heart.fill" : "heart"
+                            )
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 13)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(isSavedAsPreference ? .white : .pink)
+                        .background(isSavedAsPreference ? Color.pink : AppSurfaceStyle.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.pink.opacity(isSavedAsPreference ? 0 : 0.35), lineWidth: 1)
+                        }
+                    }
+                    .padding(.top, 4)
+                    .padding(.bottom, 12)
                 }
                 .padding()
             }
@@ -2268,6 +2306,10 @@ struct FoodEntryEditView: View {
                 category = entry.category
                 mealType = entry.mealType ?? FoodMealType.defaultType(for: entry.createdAt)
                 nutritionWasEstimatedByAI = entry.nutritionEstimatedByAI == true
+                recordedEntryDate = entry.createdAt
+                recordedEntryRawInput = entry.rawInput
+                isEntryRecorded = true
+                replacementRecordedEntry = nil
                 DispatchQueue.main.async {
                     isInitializing = false
                 }
@@ -2614,22 +2656,81 @@ struct FoodEntryEditView: View {
     private func saveChanges() {
         guard let values = validatedValues() else { return }
 
-        entry.foodName = mergeTargetPreference?.keyword ?? values.name
-        entry.brand = mergeTargetPreference?.brand ?? values.brand
-        entry.grams = values.grams
-        entry.calories = values.calories
-        entry.protein = values.protein
-        entry.carbohydrates = values.carbohydrates
-        entry.fat = values.fat
-        entry.category = category
-        entry.mealType = category == .meal ? mealType : nil
-        entry.energyUnit = energyUnit
-        entry.nutritionEstimatedByAI = nutritionWasEstimatedByAI
+        guard isEntryRecorded else {
+            onSaved?()
+            dismiss()
+            return
+        }
+
+        let targetEntry = replacementRecordedEntry ?? entry
+
+        targetEntry.foodName = mergeTargetPreference?.keyword ?? values.name
+        targetEntry.brand = mergeTargetPreference?.brand ?? values.brand
+        targetEntry.grams = values.grams
+        targetEntry.calories = values.calories
+        targetEntry.protein = values.protein
+        targetEntry.carbohydrates = values.carbohydrates
+        targetEntry.fat = values.fat
+        targetEntry.category = category
+        targetEntry.mealType = category == .meal ? mealType : nil
+        targetEntry.energyUnit = energyUnit
+        targetEntry.nutritionEstimatedByAI = nutritionWasEstimatedByAI
 
         do {
             try modelContext.save()
             onSaved?()
             dismiss()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func toggleEntryIntake() {
+        if isEntryRecorded {
+            let targetEntry = replacementRecordedEntry ?? entry
+            modelContext.delete(targetEntry)
+
+            do {
+                try modelContext.save()
+                replacementRecordedEntry = nil
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isEntryRecorded = false
+                }
+                errorMessage = nil
+                onSaved?()
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            return
+        }
+
+        guard let values = validatedValues() else { return }
+
+        let restoredEntry = FoodEntry(
+            rawInput: recordedEntryRawInput.isEmpty ? "记录摄入: \(values.name)" : recordedEntryRawInput,
+            foodName: mergeTargetPreference?.keyword ?? values.name,
+            brand: mergeTargetPreference?.brand ?? values.brand,
+            grams: values.grams,
+            calories: values.calories,
+            protein: values.protein,
+            carbohydrates: values.carbohydrates,
+            fat: values.fat,
+            date: recordedEntryDate,
+            category: category,
+            mealType: category == .meal ? mealType : nil,
+            energyUnit: energyUnit,
+            nutritionEstimatedByAI: nutritionWasEstimatedByAI
+        )
+        modelContext.insert(restoredEntry)
+
+        do {
+            try modelContext.save()
+            replacementRecordedEntry = restoredEntry
+            withAnimation(.easeInOut(duration: 0.18)) {
+                isEntryRecorded = true
+            }
+            errorMessage = nil
+            onSaved?()
         } catch {
             errorMessage = error.localizedDescription
         }

@@ -21,7 +21,7 @@ struct FoodConfirmationView: View {
     let initialCategory: FoodEntryCategory
     let initialMealType: FoodMealType?
     let initialEnergyUnit: EnergyUnit
-    let onConfirm: (NutritionInfo, FoodEntryCategory, FoodMealType?) -> Void
+    let onConfirm: (NutritionInfo, FoodEntryCategory, FoodMealType?) -> FoodEntry?
 
     init(
         rawInput: String,
@@ -29,7 +29,7 @@ struct FoodConfirmationView: View {
         initialCategory: FoodEntryCategory = .meal,
         initialMealType: FoodMealType? = nil,
         initialEnergyUnit: EnergyUnit = .kilocalorie,
-        onConfirm: @escaping (NutritionInfo, FoodEntryCategory, FoodMealType?) -> Void
+        onConfirm: @escaping (NutritionInfo, FoodEntryCategory, FoodMealType?) -> FoodEntry?
     ) {
         self.rawInput = rawInput
         self.originalNutrition = originalNutrition
@@ -58,6 +58,10 @@ struct FoodConfirmationView: View {
     @State private var matchedPreferenceID: UUID?
     @State private var matchedPreferenceKind: FoodPreferenceMatchKind?
     @State private var addAsNewPreference = false
+    @State private var savedPreference: FoodPreference?
+    @State private var recordedEntry: FoodEntry?
+    @State private var actionToastMessage: String?
+    @State private var actionToastID = UUID()
 
     private var quantityUnit: String {
         category.quantityUnitSymbol
@@ -79,8 +83,8 @@ struct FoodConfirmationView: View {
         addAsNewPreference ? nil : matchedPreference
     }
 
-    private var hasExistingPreference: Bool {
-        targetExistingPreference != nil
+    private var isPreferenceSaved: Bool {
+        savedPreference != nil
     }
 
     private var canSavePreference: Bool {
@@ -130,8 +134,6 @@ struct FoodConfirmationView: View {
 
                     // Save as preference section
                     preferenceSection
-
-                    actionSection
                 }
                 .padding()
             }
@@ -160,15 +162,39 @@ struct FoodConfirmationView: View {
                 ) {
                     matchedPreferenceID = match.preference.id
                     matchedPreferenceKind = match.kind
+                    savedPreference = match.preference
                     applyMatchedPreference(match.preference)
                 }
             }
             .onChange(of: addAsNewPreference) { _, shouldCreateNew in
                 if shouldCreateNew {
+                    savedPreference = nil
                     applyOriginalNutrition()
                 } else if let matchedPreference {
+                    savedPreference = matchedPreference
                     applyMatchedPreference(matchedPreference)
                 }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                actionSection
+                    .padding(.horizontal)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+                    .background(.regularMaterial)
+            }
+        }
+        .overlay {
+            if let actionToastMessage {
+                Text(actionToastMessage)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 13)
+                    .background(Color.black.opacity(0.78))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 4)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
     }
@@ -250,17 +276,41 @@ struct FoodConfirmationView: View {
     private func recordIntake() {
         focusedField = nil
         editingField = nil
-        onConfirm(
+
+        guard let entry = onConfirm(
             editedNutrition,
             category,
             category == .meal ? mealType : nil
-        )
-        dismiss()
+        ) else { return }
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            recordedEntry = entry
+        }
+        showActionToast("已记录摄入")
+    }
+
+    private func deleteRecordedIntake() {
+        focusedField = nil
+        editingField = nil
+
+        guard let recordedEntry else { return }
+        modelContext.delete(recordedEntry)
+
+        do {
+            try modelContext.save()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                self.recordedEntry = nil
+            }
+            showActionToast("已删除摄入")
+        } catch {
+            preferenceSaveMessage = error.localizedDescription
+        }
     }
 
     private func savePreference() {
         focusedField = nil
         editingField = nil
+        preferenceSaveMessage = nil
 
         let keyword = preferenceKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyword.isEmpty else {
@@ -281,6 +331,7 @@ struct FoodConfirmationView: View {
             : description
 
         // Update an exact/similar match when selected; otherwise create a new habit.
+        let preferenceToSave: FoodPreference
         if let existing = targetExistingPreference {
             let isSimilarMatch = matchedPreferenceKind == .similar
             // Update existing with new values
@@ -299,7 +350,7 @@ struct FoodConfirmationView: View {
                 fat: nutrition.fat
             )
             existing.usageCount += 1
-            preferenceSaveMessage = isSimilarMatch ? "已更新相似食物习惯" : "已更新食物习惯"
+            preferenceToSave = existing
         } else {
             // Create new with nutrition values
             let preference = FoodPreference(
@@ -317,14 +368,59 @@ struct FoodConfirmationView: View {
                 fat: nutrition.fat
             )
             modelContext.insert(preference)
-            preferenceSaveMessage = "已保存食物习惯"
+            preferenceToSave = preference
         }
 
         // Save immediately so it appears in the preferences list
         do {
             try modelContext.save()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                savedPreference = preferenceToSave
+                matchedPreferenceID = preferenceToSave.id
+                matchedPreferenceKind = .exact
+                addAsNewPreference = false
+            }
+            showActionToast("已保存习惯")
         } catch {
             preferenceSaveMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteSavedPreference() {
+        focusedField = nil
+        editingField = nil
+        preferenceSaveMessage = nil
+
+        guard let savedPreference else { return }
+        modelContext.delete(savedPreference)
+
+        do {
+            try modelContext.save()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                self.savedPreference = nil
+                matchedPreferenceID = nil
+                matchedPreferenceKind = nil
+                addAsNewPreference = false
+            }
+            showActionToast("已删除习惯")
+        } catch {
+            preferenceSaveMessage = error.localizedDescription
+        }
+    }
+
+    private func showActionToast(_ message: String) {
+        let toastID = UUID()
+        actionToastID = toastID
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            actionToastMessage = message
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            guard actionToastID == toastID else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                actionToastMessage = nil
+            }
         }
     }
 
@@ -685,28 +781,9 @@ struct FoodConfirmationView: View {
                 TextField("描述，如：150ml全脂牛奶", text: $preferenceDescription)
                     .textFieldStyle(.roundedBorder)
 
-                if let matchedPreference {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(
-                            addAsNewPreference
-                                ? "已找到食物习惯：\(matchedPreference.keyword)"
-                                : "已加载食物习惯：\(matchedPreference.keyword)",
-                            systemImage: addAsNewPreference ? "link" : "heart.fill"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(addAsNewPreference ? Color.orange : Color.pink)
-
-                        Text(
-                            addAsNewPreference
-                                ? "当前保留 AI 识别结果，保存时将新建习惯。"
-                                : "当前使用该习惯已保存的名称、品牌和营养数据。"
-                        )
-                        .font(.caption2)
-                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
-
-                        Toggle("添加为新的食物习惯", isOn: $addAsNewPreference)
-                            .font(.subheadline)
-                    }
+                if matchedPreference != nil {
+                    Toggle("添加为新的食物习惯", isOn: $addAsNewPreference)
+                        .font(.subheadline)
                 } else {
                     Label("尚未保存到食物习惯，可新建习惯", systemImage: "heart")
                         .font(.caption)
@@ -716,9 +793,9 @@ struct FoodConfirmationView: View {
             .padding(.top, 4)
 
             if let preferenceSaveMessage {
-                Label(preferenceSaveMessage, systemImage: "checkmark.circle.fill")
+                Label(preferenceSaveMessage, systemImage: "exclamationmark.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(preferenceSaveMessage.hasPrefix("已") ? .green : .red)
+                    .foregroundStyle(.red)
             }
         }
         .padding()
@@ -734,9 +811,16 @@ struct FoodConfirmationView: View {
     private var actionSection: some View {
         HStack(spacing: 12) {
             Button {
-                savePreference()
+                if recordedEntry == nil {
+                    recordIntake()
+                } else {
+                    deleteRecordedIntake()
+                }
             } label: {
-                Label(hasExistingPreference ? "更新习惯" : "保存习惯", systemImage: "heart.fill")
+                Label(
+                    recordedEntry == nil ? "记录摄入" : "删除摄入",
+                    systemImage: recordedEntry == nil ? "plus.circle.fill" : "minus.circle.fill"
+                )
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
@@ -744,14 +828,20 @@ struct FoodConfirmationView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white)
-            .background(canSavePreference ? Color.pink : Color.gray)
+            .background(recordedEntry == nil ? Color.gray : Color.green)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .disabled(!canSavePreference)
 
             Button {
-                recordIntake()
+                if isPreferenceSaved {
+                    deleteSavedPreference()
+                } else {
+                    savePreference()
+                }
             } label: {
-                Label("记录摄入", systemImage: "plus.circle.fill")
+                Label(
+                    isPreferenceSaved ? "删除习惯" : "保存习惯",
+                    systemImage: isPreferenceSaved ? "heart.fill" : "heart"
+                )
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
@@ -759,8 +849,9 @@ struct FoodConfirmationView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white)
-            .background(Color.green)
+            .background(isPreferenceSaved || canSavePreference ? Color.pink : Color.gray)
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .disabled(!isPreferenceSaved && !canSavePreference)
         }
     }
 }
@@ -818,5 +909,6 @@ struct EditableNutritionCard: View {
         )
     ) { nutrition, category, mealType in
         print("Confirmed: \(nutrition.foodName), \(category.rawValue), \(mealType?.rawValue ?? "")")
+        return nil
     }
 }

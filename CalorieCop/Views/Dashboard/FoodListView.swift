@@ -78,6 +78,7 @@ struct FoodListView: View {
                     showsPreferenceControl: true,
                     isSavedAsPreference: isSavedAsPreference(entry),
                     isAutofillingNutrition: autofillingNutritionEntryID == entry.id,
+                    inlineActionDeletes: true,
                     onEdit: {
                         entryToEdit = entry
                     },
