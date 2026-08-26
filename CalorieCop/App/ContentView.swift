@@ -1,6 +1,26 @@
 import SwiftUI
+import SwiftData
 
 struct ContentView: View {
+    @Query private var foodEntries: [FoodEntry]
+    @StateObject private var healthKitService = HealthKitService()
+
+    private var nutritionSyncIdentifier: String {
+        foodEntries
+            .map {
+                [
+                    $0.id.uuidString,
+                    String($0.calories.bitPattern),
+                    String($0.protein.bitPattern),
+                    String($0.carbohydrates.bitPattern),
+                    String($0.fat.bitPattern),
+                    String($0.createdAt.timeIntervalSinceReferenceDate.bitPattern)
+                ].joined(separator: ":")
+            }
+            .sorted()
+            .joined(separator: "|")
+    }
+
     var body: some View {
         TabView {
             DashboardView()
@@ -22,6 +42,12 @@ struct ContentView: View {
                 .tabItem {
                     Label("历史", systemImage: "calendar")
                 }
+        }
+        .task(id: nutritionSyncIdentifier) {
+            if !healthKitService.isAuthorized {
+                await healthKitService.requestAuthorization()
+            }
+            await healthKitService.synchronizeNutrition(with: foodEntries)
         }
     }
 }

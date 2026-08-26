@@ -509,8 +509,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CalorieCapture;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CalorieCop需要使用相机来拍摄食物照片进行营养分析。";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "CalorieCop需要读取您的健康数据来追踪卡路里消耗。";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "CalorieCop需要访问您的健康数据。";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "CalorieCop需要读取营养摄入与能量消耗数据，用于同步记录并计算每日热量。";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "CalorieCop需要将膳食能量、蛋白质、碳水化合物和脂肪写入健康 App。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "CalorieCop需要访问您的照片来选择食物图片进行营养分析。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -545,8 +545,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = CalorieCapture;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CalorieCop需要使用相机来拍摄食物照片进行营养分析。";
-				INFOPLIST_KEY_NSHealthShareUsageDescription = "CalorieCop需要读取您的健康数据来追踪卡路里消耗。";
-				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "CalorieCop需要访问您的健康数据。";
+				INFOPLIST_KEY_NSHealthShareUsageDescription = "CalorieCop需要读取营养摄入与能量消耗数据，用于同步记录并计算每日热量。";
+				INFOPLIST_KEY_NSHealthUpdateUsageDescription = "CalorieCop需要将膳食能量、蛋白质、碳水化合物和脂肪写入健康 App。";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "CalorieCop需要访问您的照片来选择食物图片进行营养分析。";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

@@ -28,7 +28,6 @@ struct DashboardView: View {
     @State private var goalRefreshTrigger = UUID()
     @State private var showingAIAdvisor = false
     @State private var showingSettings = false
-    @State private var showingFoodInput = false
     @State private var editingPreference: DashboardEditingPreference?
     @State private var showingDashboardCamera = false
     @State private var showingDashboardCameraAlert = false
@@ -36,7 +35,6 @@ struct DashboardView: View {
     @State private var dashboardSelectedImage: UIImage?
     @State private var dashboardSelectedPhoto: PhotosPickerItem?
     @State private var isDashboardSearchFocused = false
-    @State private var shouldAutoStartFoodRecognition = false
     @State private var dashboardQuickRecordMessage: String?
     @State private var isDashboardRecognizing = false
     @State private var dashboardRecognitionNutrition: NutritionInfo?
@@ -123,7 +121,7 @@ struct DashboardView: View {
 
     private var savedPreferenceSuggestions: [FoodPreference] {
         let query = dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return [] }
+        guard !query.isEmpty, dashboardSelectedImage == nil else { return [] }
 
         return Array(
             foodPreferences
@@ -144,6 +142,7 @@ struct DashboardView: View {
     private var isDashboardSearchMode: Bool {
         isDashboardSearchFocused
             || !dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || dashboardSelectedImage != nil
     }
 
     var body: some View {
@@ -184,19 +183,6 @@ struct DashboardView: View {
             .sheet(isPresented: $showingSettings) {
                 AppSettingsView()
             }
-            .sheet(isPresented: $showingFoodInput) {
-                FoodInputView(
-                    initialSearchText: dashboardSearchText,
-                    initialImage: dashboardSelectedImage,
-                    autoStartRecognition: shouldAutoStartFoodRecognition
-                ) {
-                    dashboardSearchText = ""
-                    dashboardSelectedImage = nil
-                    dashboardSelectedPhoto = nil
-                    shouldAutoStartFoodRecognition = false
-                    showingFoodInput = false
-                }
-            }
             .sheet(
                 isPresented: $showingDashboardRecognitionResult,
                 onDismiss: finishDashboardRecognitionFlow
@@ -233,7 +219,7 @@ struct DashboardView: View {
                     }
                 )
             }
-            .sheet(isPresented: $showingDashboardCamera) {
+            .fullScreenCover(isPresented: $showingDashboardCamera) {
                 CameraView(image: $dashboardSelectedImage)
             }
             .alert("相机不可用", isPresented: $showingDashboardCameraAlert) {
@@ -261,6 +247,7 @@ struct DashboardView: View {
                     if let data = try? await dashboardSelectedPhoto?.loadTransferable(type: Data.self),
                        let image = UIImage(data: data) {
                         dashboardSelectedImage = image
+                        isDashboardSearchFocused = true
                     }
                 }
             }
@@ -326,6 +313,7 @@ struct DashboardView: View {
                         },
                         onPasteImage: { image in
                             dashboardSelectedImage = image
+                            isDashboardSearchFocused = true
                         },
                         onPasteFailure: {}
                     )
@@ -394,6 +382,8 @@ struct DashboardView: View {
                     Button("取消") {
                         commitPendingPreferenceDeletions()
                         dashboardSearchText = ""
+                        dashboardSelectedImage = nil
+                        dashboardSelectedPhoto = nil
                         isDashboardSearchFocused = false
                     }
                     .font(.subheadline)
@@ -401,6 +391,40 @@ struct DashboardView: View {
                     .buttonStyle(.plain)
                     .transition(.opacity)
                 }
+            }
+
+            if let selectedImage = dashboardSelectedImage {
+                HStack(spacing: 12) {
+                    Image(uiImage: selectedImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 48, height: 48)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("已添加食物图片")
+                            .font(.subheadline.weight(.medium))
+                        Text("可继续输入份量或烹饪方式，再点 AI 识别")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    Button {
+                        dashboardSelectedImage = nil
+                        dashboardSelectedPhoto = nil
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("移除图片")
+                }
+                .padding(.horizontal, 4)
+                .padding(.top, 12)
+                .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
             if !savedPreferenceSuggestions.isEmpty {
@@ -428,14 +452,9 @@ struct DashboardView: View {
             .easeInOut(duration: 0.2),
             value: savedPreferenceSuggestions.map { $0.id }
         )
-        .onChange(of: dashboardSelectedImage) { _, image in
-            if image != nil && !showingDashboardCamera {
-                presentFoodInput(autoStartRecognition: false)
-            }
-        }
         .onChange(of: showingDashboardCamera) { _, isPresented in
             if !isPresented, dashboardSelectedImage != nil {
-                presentFoodInput(autoStartRecognition: false)
+                isDashboardSearchFocused = true
             }
         }
     }
@@ -471,35 +490,32 @@ struct DashboardView: View {
         }
     }
 
-    private func presentFoodInput(autoStartRecognition: Bool) {
-        guard autoStartRecognition == false || canRecognizeFromDashboardSearch else {
-            isDashboardSearchFocused = true
-            return
-        }
-
-        isDashboardSearchFocused = false
-        shouldAutoStartFoodRecognition = autoStartRecognition
-        showingFoodInput = true
-    }
-
     private func recognizeFromDashboardSearch() {
         guard !isDashboardRecognizing else { return }
 
         let input = dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !input.isEmpty else {
+        let selectedImage = dashboardSelectedImage
+        guard !input.isEmpty || selectedImage != nil else {
             isDashboardSearchFocused = true
             return
         }
 
-        guard APIKeyManager.isDeepSeekConfigured
-                || APIKeyManager.isMiniMaxConfigured
-                || APIKeyManager.isQwenConfigured else {
-            dashboardRecognitionError = "文字解析需要设置 DeepSeek、MiniMax 或 Qwen API 密钥。"
-            return
+        if selectedImage != nil {
+            guard APIKeyManager.isQwenConfigured else {
+                dashboardRecognitionError = "图片识别需要设置 Qwen API 密钥。"
+                return
+            }
+        } else {
+            guard APIKeyManager.isDeepSeekConfigured
+                    || APIKeyManager.isMiniMaxConfigured
+                    || APIKeyManager.isQwenConfigured else {
+                dashboardRecognitionError = "文字解析需要设置 DeepSeek、MiniMax 或 Qwen API 密钥。"
+                return
+            }
         }
 
         isDashboardSearchFocused = false
-        dashboardRecognitionRawInput = input
+        dashboardRecognitionRawInput = input.isEmpty ? "图片识别" : input
         isDashboardRecognizing = true
         dashboardRecognitionError = nil
         UIApplication.shared.sendAction(
@@ -511,10 +527,19 @@ struct DashboardView: View {
 
         Task {
             do {
-                let nutritionList = try await aiService.parseFoodInputMultiple(
-                    input,
-                    preferences: foodPreferences
-                )
+                let nutritionList: [NutritionInfo]
+                if let selectedImage {
+                    nutritionList = try await aiService.parseFoodImageMultiple(
+                        selectedImage,
+                        additionalContext: input.isEmpty ? nil : input,
+                        preferences: foodPreferences
+                    )
+                } else {
+                    nutritionList = try await aiService.parseFoodInputMultiple(
+                        input,
+                        preferences: foodPreferences
+                    )
+                }
 
                 await MainActor.run {
                     isDashboardRecognizing = false
@@ -584,6 +609,8 @@ struct DashboardView: View {
 
     private func finishDashboardRecognitionFlow() {
         dashboardSearchText = ""
+        dashboardSelectedImage = nil
+        dashboardSelectedPhoto = nil
         dashboardRecognitionRawInput = ""
         dashboardRecognitionNutrition = nil
         dashboardRecognitionList = []

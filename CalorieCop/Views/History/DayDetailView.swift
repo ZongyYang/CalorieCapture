@@ -17,6 +17,7 @@ struct DayDetailView: View {
     let energyBurned: DailyEnergyBurned?
     @State private var entries: [FoodEntry]
     @State private var entryToEdit: FoodEntry?
+    @State private var entryToDelete: FoodEntry?
     @State private var fetchedEnergyBurned: DailyEnergyBurned?
     @State private var showingBackfillSheet = false
     @State private var showingAIAdvisor = false
@@ -206,7 +207,7 @@ struct DayDetailView: View {
                 // Food list
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(alignment: .center) {
-                        Text("食物明细")
+                        Text("当日记录")
                             .font(.headline)
                         Spacer()
                         Button {
@@ -224,7 +225,6 @@ struct DayDetailView: View {
                             entry: entry,
                             showsPreferenceControl: true,
                             isSavedAsPreference: isSavedAsPreference(entry),
-                            isAutofillingNutrition: autofillingNutritionEntryID == entry.id,
                             inlineActionDeletes: true,
                             onEdit: {
                                 entryToEdit = entry
@@ -232,11 +232,8 @@ struct DayDetailView: View {
                             onTogglePreference: {
                                 togglePreference(for: entry)
                             },
-                            onAutofillNutrition: {
-                                autofillNutrition(for: entry)
-                            },
                             onDelete: {
-                                deleteEntry(entry)
+                                entryToDelete = entry
                             }
                         )
                         .contextMenu {
@@ -253,7 +250,7 @@ struct DayDetailView: View {
                             }
 
                             Button(role: .destructive) {
-                                deleteEntry(entry)
+                                entryToDelete = entry
                             } label: {
                                 Label("删除", systemImage: "trash")
                             }
@@ -343,6 +340,25 @@ struct DayDetailView: View {
             }
         } message: {
             Text(nutritionAutofillMessage ?? "")
+        }
+        .alert(
+            "删除摄入记录",
+            isPresented: Binding(
+                get: { entryToDelete != nil },
+                set: { if !$0 { entryToDelete = nil } }
+            )
+        ) {
+            Button("取消", role: .cancel) {
+                entryToDelete = nil
+            }
+            Button("删除", role: .destructive) {
+                if let entryToDelete {
+                    deleteEntry(entryToDelete)
+                }
+                entryToDelete = nil
+            }
+        } message: {
+            Text("确定要删除“\(entryToDelete?.foodName ?? "这条食物")”的摄入记录吗？")
         }
     }
 
@@ -1199,11 +1215,9 @@ struct SwipeableFoodEntryRow: View {
     let entry: FoodEntry
     let showsPreferenceControl: Bool
     let isSavedAsPreference: Bool
-    let isAutofillingNutrition: Bool
     let inlineActionDeletes: Bool
     let onEdit: () -> Void
     let onTogglePreference: () -> Void
-    let onAutofillNutrition: () -> Void
     let onDelete: () -> Void
 
     @State private var settledOffset: CGFloat = 0
@@ -1248,9 +1262,7 @@ struct SwipeableFoodEntryRow: View {
                 entry: entry,
                 showsPreferenceControl: showsPreferenceControl,
                 isSavedAsPreference: isSavedAsPreference,
-                isAutofillingNutrition: isAutofillingNutrition,
                 onTogglePreference: onTogglePreference,
-                onAutofillNutrition: onAutofillNutrition,
                 onEdit: onEdit,
                 inlineActionDeletes: inlineActionDeletes,
                 onDelete: onDelete
@@ -1293,9 +1305,7 @@ private struct FoodEntryDetailRow: View {
     let entry: FoodEntry
     let showsPreferenceControl: Bool
     let isSavedAsPreference: Bool
-    let isAutofillingNutrition: Bool
     let onTogglePreference: () -> Void
-    let onAutofillNutrition: () -> Void
     let onEdit: () -> Void
     let inlineActionDeletes: Bool
     let onDelete: () -> Void
@@ -1342,19 +1352,6 @@ private struct FoodEntryDetailRow: View {
                     .foregroundStyle(.orange)
 
                 HStack(spacing: 2) {
-                    Button {
-                        onAutofillNutrition()
-                    } label: {
-                        AIRecognitionStatusIcon(
-                            isComplete: entry.hasCompleteNutritionInfo,
-                            isProcessing: isAutofillingNutrition
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isAutofillingNutrition)
-                    .accessibilityLabel("AI识别")
-                    .accessibilityValue(entry.hasCompleteNutritionInfo ? "营养信息完整" : "营养信息待补全")
-
                     if showsPreferenceControl {
                         Button {
                             onTogglePreference()
@@ -1376,9 +1373,9 @@ private struct FoodEntryDetailRow: View {
                             onEdit()
                         }
                     } label: {
-                        Image(systemName: inlineActionDeletes ? "plus.circle.fill" : "pencil")
-                            .font(inlineActionDeletes ? .title2 : .body)
-                            .foregroundStyle(inlineActionDeletes ? Color.blue : Color.secondary)
+                        Image(systemName: inlineActionDeletes ? "trash.fill" : "pencil")
+                            .font(.body)
+                            .foregroundStyle(inlineActionDeletes ? Color.red : Color.secondary)
                             .frame(width: 36, height: 36)
                             .contentShape(Rectangle())
                     }
@@ -2284,7 +2281,7 @@ struct FoodEntryEditView: View {
             .sheet(isPresented: $showingSettings) {
                 AppSettingsView()
             }
-            .sheet(isPresented: $showingCamera, onDismiss: recognizeCapturedImage) {
+            .fullScreenCover(isPresented: $showingCamera, onDismiss: recognizeCapturedImage) {
                 CameraView(image: $selectedImage)
             }
             .alert("相机不可用", isPresented: $showingCameraAlert) {

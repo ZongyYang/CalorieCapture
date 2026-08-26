@@ -27,6 +27,23 @@ enum FoodEntryCategory: String, CaseIterable, Identifiable, Codable {
             return "g"
         }
     }
+
+    static func inferred(for foodName: String, description: String = "") -> FoodEntryCategory {
+        if description.localizedCaseInsensitiveContains("ml") {
+            return .drink
+        }
+
+        let normalizedName = foodName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let drinkKeywords = [
+            "豆浆", "牛奶", "奶茶", "咖啡", "拿铁", "美式", "果汁", "饮料", "饮品",
+            "汽水", "可乐", "苏打水", "气泡水", "矿泉水", "纯净水", "椰子水", "柠檬水",
+            "蜂蜜水", "绿茶", "红茶", "乌龙茶", "普洱茶", "花茶", "啤酒", "红酒",
+            "白酒", "鸡尾酒", "酸奶", "乳饮"
+        ]
+        return drinkKeywords.contains(where: normalizedName.contains) ? .drink : .meal
+    }
 }
 
 enum FoodMealType: String, CaseIterable, Identifiable, Codable {

@@ -373,7 +373,7 @@ struct AIAdvisorView: View {
                     apiKeyRefreshTrigger.toggle()
                 }
             }
-            .sheet(isPresented: $showingCamera) {
+            .fullScreenCover(isPresented: $showingCamera) {
                 CameraView(image: $capturedImage)
             }
             .alert("提示", isPresented: Binding(

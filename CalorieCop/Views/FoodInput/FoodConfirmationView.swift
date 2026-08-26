@@ -286,7 +286,7 @@ struct FoodConfirmationView: View {
         withAnimation(.easeInOut(duration: 0.18)) {
             recordedEntry = entry
         }
-        showActionToast("已记录摄入")
+        dismiss()
     }
 
     private func deleteRecordedIntake() {

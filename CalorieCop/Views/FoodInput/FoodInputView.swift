@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import AVFoundation
 
 private enum ManualEnergyInputMode: String, CaseIterable, Identifiable {
     case total
@@ -248,7 +249,7 @@ struct FoodInputView: View {
                     }
                 )
             }
-            .sheet(isPresented: $showingCamera) {
+            .fullScreenCover(isPresented: $showingCamera) {
                 CameraView(image: $selectedImage)
             }
             .sheet(isPresented: $showMultipleConfirmation) {
@@ -1757,7 +1758,8 @@ struct SavedPreferenceSuggestionPanel: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
 
@@ -2090,10 +2092,7 @@ struct FoodPreferenceEditView: View {
     @State private var hasStartedInitialRecognition = false
     @State private var showingDeleteConfirmation = false
     @State private var aiInputText = ""
-    @State private var recordedEntryInSession: FoodEntry?
     @State private var isPreferenceSaved = true
-    @State private var actionToastMessage: String?
-    @State private var actionToastID = UUID()
     @FocusState private var focusedField: PreferenceEditField?
 
     private let aiService = MiniMaxService()
@@ -2349,22 +2348,17 @@ struct FoodPreferenceEditView: View {
                         Button {
                             recordIntake()
                         } label: {
-                            Label(
-                                recordedEntryInSession == nil ? "记录摄入" : "删除摄入",
-                                systemImage: recordedEntryInSession == nil
-                                    ? "plus.circle.fill"
-                                    : "minus.circle.fill"
-                            )
+                            Label("记录摄入", systemImage: "plus.circle.fill")
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 13)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(recordedEntryInSession == nil ? Color.secondary : Color.white)
-                        .background(recordedEntryInSession == nil ? Color(.systemGray5) : Color.green)
+                        .foregroundStyle(Color.secondary)
+                        .background(Color(.systemGray5))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .disabled(recordedEntryInSession == nil && !canRecordIntake)
+                        .disabled(!canRecordIntake)
 
                         Button {
                             if isPreferenceSaved {
@@ -2405,7 +2399,7 @@ struct FoodPreferenceEditView: View {
             .sheet(isPresented: $showingSettings) {
                 AppSettingsView()
             }
-            .sheet(isPresented: $showingCamera, onDismiss: recognizeCapturedImage) {
+            .fullScreenCover(isPresented: $showingCamera, onDismiss: recognizeCapturedImage) {
                 CameraView(image: $selectedImage)
             }
             .alert("相机不可用", isPresented: $showingCameraAlert) {
@@ -2470,20 +2464,6 @@ struct FoodPreferenceEditView: View {
                         focusedField = nil
                     }
                 }
-            }
-        }
-        .overlay {
-            if let actionToastMessage {
-                Text(actionToastMessage)
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 22)
-                    .padding(.vertical, 13)
-                    .background(Color.black.opacity(0.78))
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 4)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
     }
@@ -2720,46 +2700,10 @@ struct FoodPreferenceEditView: View {
 
     private func recordIntake() {
         focusedField = nil
-
-        if let recordedEntryInSession {
-            modelContext.delete(recordedEntryInSession)
-            preference.usageCount = max(0, preference.usageCount - 1)
-            do {
-                try modelContext.save()
-                withAnimation(.easeInOut(duration: 0.18)) {
-                    self.recordedEntryInSession = nil
-                }
-                onIntakeStateChange(false)
-                showActionToast("已删除摄入")
-            } catch {
-                errorMessage = error.localizedDescription
-            }
-            return
-        }
-
         guard let nutrition = savePreferenceChanges(requireIntakeAmount: true) else { return }
-        let entry = onRecordIntake(nutrition)
-        withAnimation(.easeInOut(duration: 0.18)) {
-            recordedEntryInSession = entry
-        }
+        _ = onRecordIntake(nutrition)
         onIntakeStateChange(true)
-        showActionToast("已记录摄入")
-    }
-
-    private func showActionToast(_ message: String) {
-        let toastID = UUID()
-        actionToastID = toastID
-
-        withAnimation(.easeInOut(duration: 0.2)) {
-            actionToastMessage = message
-        }
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
-            guard actionToastID == toastID else { return }
-            withAnimation(.easeInOut(duration: 0.25)) {
-                actionToastMessage = nil
-            }
-        }
+        dismiss()
     }
 
     private func deletePreference() {
@@ -3520,39 +3464,389 @@ struct SingleFoodEditView: View {
 
 // MARK: - Camera View
 
-struct CameraView: UIViewControllerRepresentable {
+struct CameraView: View {
     @Binding var image: UIImage?
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var camera = CameraController()
 
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
 
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+            CameraPreview(session: camera.session)
+                .ignoresSafeArea()
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: CameraView
-
-        init(_ parent: CameraView) {
-            self.parent = parent
-        }
-
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage {
-                parent.image = image
+            if let errorMessage = camera.errorMessage {
+                VStack(spacing: 16) {
+                    Image(systemName: "camera.fill")
+                        .font(.largeTitle)
+                    Text(errorMessage)
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                }
+                .foregroundStyle(.white)
+                .padding(28)
+                .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 20))
+                .padding(.horizontal, 32)
             }
-            parent.dismiss()
+
+            VStack(spacing: 18) {
+                Spacer()
+
+                Button {
+                    camera.cycleFlashMode()
+                } label: {
+                    Label(flashTitle, systemImage: flashIcon)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(camera.isFlashAvailable ? Color.yellow : Color.secondary)
+                        .padding(.horizontal, 16)
+                        .frame(height: 42)
+                        .background(.black.opacity(0.64), in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(.white.opacity(0.18), lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .disabled(!camera.isFlashAvailable)
+                .accessibilityLabel("闪光灯\(flashTitle)")
+
+                HStack {
+                    cameraControlButton(
+                        systemName: "xmark",
+                        accessibilityLabel: "关闭相机"
+                    ) {
+                        dismiss()
+                    }
+
+                    Spacer()
+
+                    Button {
+                        camera.capturePhoto()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 72, height: 72)
+                            Circle()
+                                .stroke(.white.opacity(0.55), lineWidth: 5)
+                                .frame(width: 86, height: 86)
+                        }
+                        .opacity(camera.isCapturing ? 0.55 : 1)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(camera.isCapturing || camera.errorMessage != nil)
+                    .accessibilityLabel("拍照")
+
+                    Spacer()
+
+                    cameraControlButton(
+                        systemName: "arrow.triangle.2.circlepath.camera.fill",
+                        accessibilityLabel: "切换前后镜头"
+                    ) {
+                        camera.switchCamera()
+                    }
+                }
+                .padding(.horizontal, 34)
+            }
+            .padding(.bottom, 20)
+            .background(alignment: .bottom) {
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.86)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 250)
+                .ignoresSafeArea(edges: .bottom)
+            }
+        }
+        .onAppear {
+            camera.start()
+        }
+        .onDisappear {
+            camera.stop()
+        }
+        .onReceive(camera.$capturedImage) { capturedImage in
+            guard let capturedImage else { return }
+            image = capturedImage
+            dismiss()
+        }
+    }
+
+    private var flashTitle: String {
+        switch camera.flashMode {
+        case .on:
+            return "开启"
+        case .off:
+            return "关闭"
+        default:
+            return "自动"
+        }
+    }
+
+    private var flashIcon: String {
+        switch camera.flashMode {
+        case .on:
+            return "bolt.fill"
+        case .off:
+            return "bolt.slash.fill"
+        default:
+            return "bolt.fill"
+        }
+    }
+
+    private func cameraControlButton(
+        systemName: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 58, height: 58)
+                .background(.black.opacity(0.64), in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(.white.opacity(0.18), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct CameraPreview: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> CameraPreviewUIView {
+        let view = CameraPreviewUIView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        return view
+    }
+
+    func updateUIView(_ uiView: CameraPreviewUIView, context: Context) {
+        uiView.previewLayer.session = session
+    }
+}
+
+private final class CameraPreviewUIView: UIView {
+    override class var layerClass: AnyClass {
+        AVCaptureVideoPreviewLayer.self
+    }
+
+    var previewLayer: AVCaptureVideoPreviewLayer {
+        layer as! AVCaptureVideoPreviewLayer
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if let connection = previewLayer.connection,
+           connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
+    }
+}
+
+private final class CameraController: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate {
+    let session = AVCaptureSession()
+
+    @Published private(set) var capturedImage: UIImage?
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var flashMode: AVCaptureDevice.FlashMode = .auto
+    @Published private(set) var isFlashAvailable = false
+    @Published private(set) var isCapturing = false
+
+    private let photoOutput = AVCapturePhotoOutput()
+    private let sessionQueue = DispatchQueue(label: "com.caloriecapture.camera.session")
+    private var currentInput: AVCaptureDeviceInput?
+    private var cameraPosition: AVCaptureDevice.Position = .back
+    private var isConfigured = false
+
+    func start() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            startAuthorizedSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                if granted {
+                    self?.startAuthorizedSession()
+                } else {
+                    self?.publishError("请在系统设置中允许相机权限。")
+                }
+            }
+        case .denied, .restricted:
+            publishError("请在系统设置中允许相机权限。")
+        @unknown default:
+            publishError("当前无法使用相机。")
+        }
+    }
+
+    func stop() {
+        sessionQueue.async { [weak self] in
+            guard let self, self.session.isRunning else { return }
+            self.session.stopRunning()
+        }
+    }
+
+    func capturePhoto() {
+        guard !isCapturing else { return }
+        isCapturing = true
+        let requestedFlashMode = flashMode
+
+        sessionQueue.async { [weak self] in
+            guard let self, self.session.isRunning else {
+                DispatchQueue.main.async {
+                    self?.isCapturing = false
+                }
+                return
+            }
+
+            let settings = AVCapturePhotoSettings()
+            if self.currentInput?.device.hasFlash == true {
+                settings.flashMode = requestedFlashMode
+            }
+
+            if let connection = self.photoOutput.connection(with: .video),
+               connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90
+            }
+
+            self.photoOutput.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    func cycleFlashMode() {
+        guard isFlashAvailable else { return }
+        switch flashMode {
+        case .auto:
+            flashMode = .on
+        case .on:
+            flashMode = .off
+        default:
+            flashMode = .auto
+        }
+    }
+
+    func switchCamera() {
+        sessionQueue.async { [weak self] in
+            guard let self, self.isConfigured else { return }
+
+            let newPosition: AVCaptureDevice.Position = self.cameraPosition == .back ? .front : .back
+            guard let newDevice = AVCaptureDevice.default(
+                .builtInWideAngleCamera,
+                for: .video,
+                position: newPosition
+            ), let newInput = try? AVCaptureDeviceInput(device: newDevice) else {
+                return
+            }
+
+            self.session.beginConfiguration()
+            if let currentInput = self.currentInput {
+                self.session.removeInput(currentInput)
+            }
+
+            if self.session.canAddInput(newInput) {
+                self.session.addInput(newInput)
+                self.currentInput = newInput
+                self.cameraPosition = newPosition
+            } else if let currentInput = self.currentInput,
+                      self.session.canAddInput(currentInput) {
+                self.session.addInput(currentInput)
+            }
+            self.session.commitConfiguration()
+
+            let hasFlash = newPosition == .back && newDevice.hasFlash
+            DispatchQueue.main.async {
+                self.isFlashAvailable = hasFlash
+                if !hasFlash {
+                    self.flashMode = .off
+                }
+            }
+        }
+    }
+
+    func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        if let error {
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                self.errorMessage = "拍照失败：\(error.localizedDescription)"
+            }
+            return
         }
 
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.dismiss()
+        guard let data = photo.fileDataRepresentation(),
+              let image = UIImage(data: data) else {
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                self.errorMessage = "无法读取拍摄的照片，请重试。"
+            }
+            return
+        }
+
+        DispatchQueue.main.async {
+            self.isCapturing = false
+            self.capturedImage = image
+        }
+    }
+
+    private func startAuthorizedSession() {
+        sessionQueue.async { [weak self] in
+            guard let self, self.configureSessionIfNeeded() else { return }
+            if !self.session.isRunning {
+                self.session.startRunning()
+            }
+        }
+    }
+
+    private func configureSessionIfNeeded() -> Bool {
+        if isConfigured { return true }
+
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        session.sessionPreset = .photo
+
+        guard let device = AVCaptureDevice.default(
+            .builtInWideAngleCamera,
+            for: .video,
+            position: .back
+        ) else {
+            publishError("当前设备没有可用的相机。")
+            return false
+        }
+
+        do {
+            let input = try AVCaptureDeviceInput(device: device)
+            guard session.canAddInput(input), session.canAddOutput(photoOutput) else {
+                publishError("相机初始化失败，请稍后重试。")
+                return false
+            }
+
+            session.addInput(input)
+            session.addOutput(photoOutput)
+            currentInput = input
+            isConfigured = true
+
+            DispatchQueue.main.async {
+                self.isFlashAvailable = device.hasFlash
+            }
+            return true
+        } catch {
+            publishError("相机初始化失败：\(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func publishError(_ message: String) {
+        DispatchQueue.main.async {
+            self.errorMessage = message
+            self.isCapturing = false
         }
     }
 }
