@@ -200,6 +200,7 @@ struct CalorieBalanceView<SupplementaryContent: View>: View {
             }
         }
         .padding()
+        .frame(maxWidth: .infinity)
         .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)

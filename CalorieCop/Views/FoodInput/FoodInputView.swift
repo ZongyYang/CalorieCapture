@@ -69,12 +69,14 @@ struct FoodInputView: View {
     @State private var selectedImage: UIImage?
     @State private var showingCamera = false
     @State private var showingCameraAlert = false
+    @State private var showingPhotoLibrary = false
 
     // Food preferences
     @State private var preferenceSearchText = ""
     @State private var showingDeleteConfirmation = false
     @State private var preferenceToDelete: FoodPreference?
     @State private var editingPreference: EditingPreference?
+    @State private var editingSuggestedEntry: FoodEntry?
     @State private var showingAllPreferences = true
     @State private var isPreferenceSearchFocused = false
     @State private var pendingPreferenceDeletionIDs: Set<UUID> = []
@@ -176,12 +178,15 @@ struct FoodInputView: View {
 
                     savedPreferencesSection
 
+                    // Search mode must also show recognition errors. Previously this
+                    // message was inside the manual-only branch and was hidden while
+                    // the search field contained text.
+                    if let error = errorMessage {
+                        errorView(error)
+                    }
+
                     if !isSavedPreferenceSearchMode {
                         manualEntrySection
-
-                        if let error = errorMessage {
-                            errorView(error)
-                        }
 
                         manualActionButtons
                     }
@@ -249,9 +254,17 @@ struct FoodInputView: View {
                     }
                 )
             }
+            .sheet(item: $editingSuggestedEntry) { entry in
+                FoodEntryEditView(entry: entry)
+            }
             .fullScreenCover(isPresented: $showingCamera) {
                 CameraView(image: $selectedImage)
             }
+            .photosPicker(
+                isPresented: $showingPhotoLibrary,
+                selection: $selectedPhoto,
+                matching: .images
+            )
             .sheet(isPresented: $showMultipleConfirmation) {
                 MultipleFoodConfirmationView(
                     nutritionList: parsedNutritionList,
@@ -312,6 +325,17 @@ struct FoodInputView: View {
                 Task {
                     await parseFood()
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .focusFoodRecordSearch)) { _ in
+                isPreferenceSearchFocused = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openFoodRecordCamera)) { _ in
+                isPreferenceSearchFocused = false
+                openCameraFromSearch()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openFoodRecordPhotoLibrary)) { _ in
+                isPreferenceSearchFocused = false
+                showingPhotoLibrary = true
             }
         }
         .onChange(of: isSavedPreferenceSearchMode) { wasSearching, isSearching in
@@ -968,6 +992,14 @@ struct FoodInputView: View {
         return Array(filteredPreferences.prefix(3))
     }
 
+    private var unsavedEntrySuggestions: [FoodEntry] {
+        allEntries.unsavedSearchSuggestions(
+            matching: preferenceSearchText,
+            on: effectiveDate,
+            excluding: foodPreferences
+        )
+    }
+
     private var savedPreferencesSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
@@ -1072,10 +1104,30 @@ struct FoodInputView: View {
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
+
+            if !unsavedEntrySuggestions.isEmpty {
+                TodayEntrySuggestionPanel(
+                    entries: unsavedEntrySuggestions,
+                    onSelect: { entry in
+                        editingSuggestedEntry = entry
+                    },
+                    onSavePreference: { entry in
+                        saveSuggestedEntryAsPreference(entry)
+                    },
+                    onRecord: { entry in
+                        quickRecordSuggestedEntry(entry)
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
         }
         .animation(
             .easeInOut(duration: 0.2),
             value: savedPreferenceSuggestions.map { $0.id }
+        )
+        .animation(
+            .easeInOut(duration: 0.2),
+            value: unsavedEntrySuggestions.map { $0.id }
         )
     }
 
@@ -1661,8 +1713,57 @@ struct FoodInputView: View {
         }
 
         recordPreferenceIntake(from: preference, nutrition: nutrition)
+        showQuickRecordMessage("已记录 \(preference.keyword)")
+    }
 
-        let message = "已记录 \(preference.keyword)"
+    private func saveSuggestedEntryAsPreference(_ entry: FoodEntry) {
+        guard !foodPreferences.contains(where: {
+            $0.matches(keyword: entry.foodName, brand: entry.brand)
+        }) else { return }
+
+        modelContext.insert(FoodPreference(entry: entry))
+        do {
+            try modelContext.save()
+            showQuickRecordMessage("已保存习惯 \(entry.foodName)")
+        } catch {
+            errorMessage = "保存食物习惯失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func quickRecordSuggestedEntry(_ source: FoodEntry) {
+        let entryDate = effectiveDate
+        let entry = FoodEntry(
+            rawInput: "从今日记录再次摄入: \(source.foodName)",
+            foodName: source.foodName,
+            brand: source.brand,
+            grams: source.grams,
+            calories: source.calories,
+            protein: source.protein,
+            carbohydrates: source.carbohydrates,
+            fat: source.fat,
+            date: entryDate,
+            category: source.category,
+            mealType: source.category == .meal ? FoodMealType.defaultType(for: entryDate) : nil,
+            energyUnit: source.energyUnit,
+            nutritionEstimatedByAI: source.nutritionEstimatedByAI == true
+        )
+        modelContext.insert(entry)
+
+        do {
+            try modelContext.save()
+            preferenceSearchText = ""
+            isPreferenceSearchFocused = false
+            showQuickRecordMessage("已记录 \(source.foodName)")
+            onSaved?()
+            if isBackfillMode {
+                dismiss()
+            }
+        } catch {
+            errorMessage = "记录摄入失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func showQuickRecordMessage(_ message: String) {
         withAnimation(.easeInOut(duration: 0.18)) {
             quickRecordMessage = message
         }
@@ -1734,7 +1835,14 @@ struct SavedPreferenceSuggestionPanel: View {
     let onRecord: (FoodPreference) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("已保存习惯")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+
             ForEach(Array(preferences.enumerated()), id: \.element.id) { index, preference in
                 HStack(spacing: 12) {
                     Button {
@@ -1801,6 +1909,84 @@ struct SavedPreferenceSuggestionPanel: View {
                 .padding(.vertical, 10)
 
                 if index < preferences.count - 1 {
+                    Divider()
+                        .padding(.leading, 12)
+                }
+            }
+        }
+    }
+}
+
+struct TodayEntrySuggestionPanel: View {
+    let entries: [FoodEntry]
+    let onSelect: (FoodEntry) -> Void
+    let onSavePreference: (FoodEntry) -> Void
+    let onRecord: (FoodEntry) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("当日未保存")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                HStack(spacing: 12) {
+                    Button {
+                        onSelect(entry)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.foodName)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+
+                            HStack(spacing: 6) {
+                                if let brand = entry.brand, !brand.isEmpty {
+                                    Text(brand)
+                                }
+                                Text("\(entry.grams.formattedGrams)\(entry.category.quantityUnitSymbol)")
+                                Text("\(entry.displayedEnergy.formattedCalories) \(entry.energyUnit.symbol)")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onSavePreference(entry)
+                    } label: {
+                        Image(systemName: "heart")
+                            .font(.title3)
+                            .foregroundStyle(.gray)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("保存习惯 \(entry.foodName)")
+
+                    Button {
+                        onRecord(entry)
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.blue)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("再次记录 \(entry.foodName)")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+
+                if index < entries.count - 1 {
                     Divider()
                         .padding(.leading, 12)
                 }

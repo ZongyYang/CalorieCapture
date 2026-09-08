@@ -202,3 +202,46 @@ final class FoodEntry {
         return trimmedText.isEmpty ? nil : trimmedText
     }
 }
+
+extension Array where Element == FoodEntry {
+    func unsavedSearchSuggestions(
+        matching query: String,
+        on date: Date,
+        excluding preferences: [FoodPreference],
+        limit: Int = 3
+    ) -> [FoodEntry] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty, limit > 0 else { return [] }
+
+        let calendar = Calendar.current
+        var seenFoods: Set<String> = []
+        var suggestions: [FoodEntry] = []
+
+        for entry in sorted(by: { $0.createdAt > $1.createdAt }) {
+            guard calendar.isDate(entry.createdAt, inSameDayAs: date),
+                  entry.foodName.localizedCaseInsensitiveContains(trimmedQuery)
+                    || (entry.brand?.localizedCaseInsensitiveContains(trimmedQuery) ?? false),
+                  !preferences.contains(where: {
+                      $0.matches(keyword: entry.foodName, brand: entry.brand)
+                  }) else {
+                continue
+            }
+
+            let normalizedName = entry.foodName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let normalizedBrand = entry.brand?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() ?? ""
+            let foodKey = "\(normalizedName)|\(normalizedBrand)"
+            guard seenFoods.insert(foodKey).inserted else { continue }
+
+            suggestions.append(entry)
+            if suggestions.count == limit {
+                break
+            }
+        }
+
+        return suggestions
+    }
+}

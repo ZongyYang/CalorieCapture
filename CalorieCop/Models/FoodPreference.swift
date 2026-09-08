@@ -154,6 +154,20 @@ final class FoodPreference {
         )
     }
 
+    convenience init(entry: FoodEntry) {
+        self.init(
+            keyword: entry.foodName,
+            brand: entry.brand,
+            grams: entry.grams,
+            calories: entry.calories,
+            protein: entry.protein,
+            carbs: entry.carbohydrates,
+            fat: entry.fat,
+            category: entry.category,
+            energyUnit: entry.energyUnit
+        )
+    }
+
     /// 保存一次实际摄入的营养数据，并换算成每 100g / 100ml 的基准值。
     func updateNutritionReference(
         quantity: Double,

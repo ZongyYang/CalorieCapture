@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import WidgetKit
 
 private struct DashboardEditingPreference: Identifiable {
     let id: UUID
@@ -29,6 +30,7 @@ struct DashboardView: View {
     @State private var showingAIAdvisor = false
     @State private var showingSettings = false
     @State private var editingPreference: DashboardEditingPreference?
+    @State private var editingSuggestedEntry: FoodEntry?
     @State private var showingDashboardCamera = false
     @State private var showingDashboardCameraAlert = false
     @State private var dashboardSearchText = ""
@@ -139,6 +141,15 @@ struct DashboardView: View {
         )
     }
 
+    private var unsavedEntrySuggestions: [FoodEntry] {
+        guard dashboardSelectedImage == nil else { return [] }
+        return allEntries.unsavedSearchSuggestions(
+            matching: dashboardSearchText,
+            on: Date(),
+            excluding: foodPreferences
+        )
+    }
+
     private var isDashboardSearchMode: Bool {
         isDashboardSearchFocused
             || !dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -219,6 +230,9 @@ struct DashboardView: View {
                     }
                 )
             }
+            .sheet(item: $editingSuggestedEntry) { entry in
+                FoodEntryEditView(entry: entry)
+            }
             .fullScreenCover(isPresented: $showingDashboardCamera) {
                 CameraView(image: $dashboardSelectedImage)
             }
@@ -258,6 +272,7 @@ struct DashboardView: View {
             .refreshable {
                 await healthKitService.fetchTodayCaloriesBurned()
                 await healthKitService.fetchRecentAverageCaloriesBurned()
+                WidgetCenter.shared.reloadAllTimelines()
             }
             .onChange(of: currentGoal?.targetDate) {
                 goalRefreshTrigger = UUID()
@@ -443,6 +458,22 @@ struct DashboardView: View {
                 )
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
+
+            if !unsavedEntrySuggestions.isEmpty {
+                TodayEntrySuggestionPanel(
+                    entries: unsavedEntrySuggestions,
+                    onSelect: { entry in
+                        editingSuggestedEntry = entry
+                    },
+                    onSavePreference: { entry in
+                        saveSuggestedEntryAsPreference(entry)
+                    },
+                    onRecord: { entry in
+                        quickRecordSuggestedEntry(entry)
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
         }
         .animation(
             .easeInOut(duration: 0.2),
@@ -451,6 +482,10 @@ struct DashboardView: View {
         .animation(
             .easeInOut(duration: 0.2),
             value: savedPreferenceSuggestions.map { $0.id }
+        )
+        .animation(
+            .easeInOut(duration: 0.2),
+            value: unsavedEntrySuggestions.map { $0.id }
         )
         .onChange(of: showingDashboardCamera) { _, isPresented in
             if !isPresented, dashboardSelectedImage != nil {
@@ -629,6 +664,49 @@ struct DashboardView: View {
         recordPreferenceIntake(from: preference, nutrition: nutrition)
     }
 
+    private func saveSuggestedEntryAsPreference(_ entry: FoodEntry) {
+        guard !foodPreferences.contains(where: {
+            $0.matches(keyword: entry.foodName, brand: entry.brand)
+        }) else { return }
+
+        modelContext.insert(FoodPreference(entry: entry))
+        do {
+            try modelContext.save()
+            showDashboardQuickRecordMessage("已保存习惯 \(entry.foodName)")
+        } catch {
+            dashboardQuickRecordMessage = "保存食物习惯失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func quickRecordSuggestedEntry(_ source: FoodEntry) {
+        let entryDate = Date()
+        let entry = FoodEntry(
+            rawInput: "从今日记录再次摄入: \(source.foodName)",
+            foodName: source.foodName,
+            brand: source.brand,
+            grams: source.grams,
+            calories: source.calories,
+            protein: source.protein,
+            carbohydrates: source.carbohydrates,
+            fat: source.fat,
+            date: entryDate,
+            category: source.category,
+            mealType: source.category == .meal ? FoodMealType.defaultType(for: entryDate) : nil,
+            energyUnit: source.energyUnit,
+            nutritionEstimatedByAI: source.nutritionEstimatedByAI == true
+        )
+        modelContext.insert(entry)
+
+        do {
+            try modelContext.save()
+            dashboardSearchText = ""
+            isDashboardSearchFocused = false
+            showDashboardQuickRecordMessage("已记录 \(source.foodName)")
+        } catch {
+            dashboardQuickRecordMessage = "记录摄入失败：\(error.localizedDescription)"
+        }
+    }
+
     @discardableResult
     private func recordPreferenceIntake(from preference: FoodPreference, nutrition: NutritionInfo) -> FoodEntry {
         let entryDate = Date()
@@ -651,8 +729,11 @@ struct DashboardView: View {
         modelContext.insert(entry)
         try? modelContext.save()
         dashboardSearchText = ""
+        showDashboardQuickRecordMessage("已记录 \(preference.keyword)")
+        return entry
+    }
 
-        let message = "已记录 \(preference.keyword)"
+    private func showDashboardQuickRecordMessage(_ message: String) {
         withAnimation(.easeInOut(duration: 0.18)) {
             dashboardQuickRecordMessage = message
         }
@@ -662,7 +743,6 @@ struct DashboardView: View {
                 dashboardQuickRecordMessage = nil
             }
         }
-        return entry
     }
 
     private func quickRecordNutrition(from preference: FoodPreference) -> NutritionInfo? {

@@ -36,55 +36,57 @@ enum APIKeyManager {
     private static let qwenKeyUserDefaultsKey = "user_qwen_api_key"
     private static let regionUserDefaultsKey = "user_api_region"
 
+    private static func normalizedKey(_ rawKey: String?) -> String? {
+        guard let rawKey else { return nil }
+
+        let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, key != "your_api_key_here" else { return nil }
+        return key
+    }
+
     static var miniMaxAPIKey: String? {
         // First check UserDefaults (user-entered key)
-        if let userKey = UserDefaults.standard.string(forKey: miniMaxKeyUserDefaultsKey),
-           !userKey.isEmpty {
+        if let userKey = normalizedKey(UserDefaults.standard.string(forKey: miniMaxKeyUserDefaultsKey)) {
             return userKey
         }
 
         // Then check Secrets.swift (gitignored, for developer use)
-        let key = Secrets.miniMaxAPIKey
-        if !key.isEmpty && key != "your_api_key_here" {
+        if let key = normalizedKey(Secrets.miniMaxAPIKey) {
             return key
         }
 
         // Fallback to environment variable
-        return ProcessInfo.processInfo.environment["MINIMAX_API_KEY"]
+        return normalizedKey(ProcessInfo.processInfo.environment["MINIMAX_API_KEY"])
     }
 
     static var deepSeekAPIKey: String? {
         // First check UserDefaults (user-entered key)
-        if let userKey = UserDefaults.standard.string(forKey: deepSeekKeyUserDefaultsKey),
-           !userKey.isEmpty {
+        if let userKey = normalizedKey(UserDefaults.standard.string(forKey: deepSeekKeyUserDefaultsKey)) {
             return userKey
         }
 
         // Then check Secrets.swift (gitignored, for developer use)
-        let key = Secrets.deepSeekAPIKey
-        if !key.isEmpty && key != "your_api_key_here" {
+        if let key = normalizedKey(Secrets.deepSeekAPIKey) {
             return key
         }
 
         // Fallback to environment variable
-        return ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"]
+        return normalizedKey(ProcessInfo.processInfo.environment["DEEPSEEK_API_KEY"])
     }
 
     static var qwenAPIKey: String? {
         // First check UserDefaults (user-entered key)
-        if let userKey = UserDefaults.standard.string(forKey: qwenKeyUserDefaultsKey),
-           !userKey.isEmpty {
+        if let userKey = normalizedKey(UserDefaults.standard.string(forKey: qwenKeyUserDefaultsKey)) {
             return userKey
         }
 
         // Then check Secrets.swift (gitignored, for developer use)
-        let key = Secrets.qwenAPIKey
-        if !key.isEmpty && key != "your_api_key_here" {
+        if let key = normalizedKey(Secrets.qwenAPIKey) {
             return key
         }
 
         // Fallback to environment variable
-        return ProcessInfo.processInfo.environment["QWEN_API_KEY"]
+        return normalizedKey(ProcessInfo.processInfo.environment["QWEN_API_KEY"])
     }
 
     static var isMiniMaxConfigured: Bool {
@@ -105,15 +107,23 @@ enum APIKeyManager {
     // MARK: - User Key Management
 
     static func setUserMiniMaxKey(_ key: String) {
-        UserDefaults.standard.set(key, forKey: miniMaxKeyUserDefaultsKey)
+        storeUserKey(key, forKey: miniMaxKeyUserDefaultsKey)
     }
 
     static func setUserDeepSeekKey(_ key: String) {
-        UserDefaults.standard.set(key, forKey: deepSeekKeyUserDefaultsKey)
+        storeUserKey(key, forKey: deepSeekKeyUserDefaultsKey)
     }
 
     static func setUserQwenKey(_ key: String) {
-        UserDefaults.standard.set(key, forKey: qwenKeyUserDefaultsKey)
+        storeUserKey(key, forKey: qwenKeyUserDefaultsKey)
+    }
+
+    private static func storeUserKey(_ key: String, forKey defaultsKey: String) {
+        if let normalizedKey = normalizedKey(key) {
+            UserDefaults.standard.set(normalizedKey, forKey: defaultsKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+        }
     }
 
     static func clearUserKeys() {
@@ -123,18 +133,15 @@ enum APIKeyManager {
     }
 
     static var hasUserMiniMaxKey: Bool {
-        guard let key = UserDefaults.standard.string(forKey: miniMaxKeyUserDefaultsKey) else { return false }
-        return !key.isEmpty
+        normalizedKey(UserDefaults.standard.string(forKey: miniMaxKeyUserDefaultsKey)) != nil
     }
 
     static var hasUserDeepSeekKey: Bool {
-        guard let key = UserDefaults.standard.string(forKey: deepSeekKeyUserDefaultsKey) else { return false }
-        return !key.isEmpty
+        normalizedKey(UserDefaults.standard.string(forKey: deepSeekKeyUserDefaultsKey)) != nil
     }
 
     static var hasUserQwenKey: Bool {
-        guard let key = UserDefaults.standard.string(forKey: qwenKeyUserDefaultsKey) else { return false }
-        return !key.isEmpty
+        normalizedKey(UserDefaults.standard.string(forKey: qwenKeyUserDefaultsKey)) != nil
     }
 
     // MARK: - Region Management

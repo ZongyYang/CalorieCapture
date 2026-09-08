@@ -42,7 +42,35 @@
 		A1000024238ABCDE /* APIKeySetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100024238ABCDE /* APIKeySetupView.swift */; };
 		A1000025238ABCDE /* DataMigrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100025238ABCDE /* DataMigrationService.swift */; };
 		A1000026238ABCDE /* migration_data.json in Resources */ = {isa = PBXBuildFile; fileRef = A1100026238ABCDE /* migration_data.json */; };
+		A1000027238ABCDE /* WidgetLayoutTunerPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100027238ABCDE /* WidgetLayoutTunerPreview.swift */; };
+		87965BED286C4D7DB7547707 /* CalorieCaptureWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55483589285C437AB8EF829C /* CalorieCaptureWidget.swift */; };
+		C2850791BF8942878D2581DB /* CalorieCaptureWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C18F1DBF5E76454F8A3A6B75 /* CalorieCaptureWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F3EA0E95F69441D8BE8DF3F6 /* HealthKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1100012238ABCDE /* HealthKit.framework */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		99ED8706B5AC47CF8DFFE9AC /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1600001238ABCDE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EC72E66458B44D5092861055;
+			remoteInfo = CalorieCaptureWidget;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		23BB57C46500464EAB490A08 /* Embed App Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				C2850791BF8942878D2581DB /* CalorieCaptureWidget.appex in Embed App Extensions */,
+			);
+			name = "Embed App Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		A1100001238ABCDE /* CalorieCopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalorieCopApp.swift; sourceTree = "<group>"; };
@@ -82,6 +110,12 @@
 		A1100024238ABCDE /* APIKeySetupView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIKeySetupView.swift; sourceTree = "<group>"; };
 		A1100025238ABCDE /* DataMigrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataMigrationService.swift; sourceTree = "<group>"; };
 		A1100026238ABCDE /* migration_data.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = migration_data.json; sourceTree = "<group>"; };
+		A1100027238ABCDE /* WidgetLayoutTunerPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetLayoutTunerPreview.swift; sourceTree = "<group>"; };
+		153A7DA960AE4531B5D0E131 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		55483589285C437AB8EF829C /* CalorieCaptureWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalorieCaptureWidget.swift; sourceTree = "<group>"; };
+		70F8AEDEF2054DA58A2DA7E9 /* CalorieCaptureWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CalorieCaptureWidget.entitlements; sourceTree = "<group>"; };
+		74465A8CBD9F495AAFF95A39 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		C18F1DBF5E76454F8A3A6B75 /* CalorieCaptureWidget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = CalorieCaptureWidget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -93,6 +127,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F883970B424F445AA7FFBCF4 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F3EA0E95F69441D8BE8DF3F6 /* HealthKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -100,6 +142,7 @@
 			isa = PBXGroup;
 			children = (
 				A1300001238ABCDE /* CalorieCop */,
+				5C32ABBD0D2E45E8ACFE3004 /* CalorieCaptureWidget */,
 				A1300002238ABCDE /* Frameworks */,
 				A1300003238ABCDE /* Products */,
 			);
@@ -108,6 +151,7 @@
 		A1300001238ABCDE /* CalorieCop */ = {
 			isa = PBXGroup;
 			children = (
+				153A7DA960AE4531B5D0E131 /* Info.plist */,
 				A1100021238ABCDE /* CalorieCop.entitlements */,
 				A1300010238ABCDE /* App */,
 				A1300011238ABCDE /* Models */,
@@ -131,6 +175,7 @@
 			isa = PBXGroup;
 			children = (
 				A1100020238ABCDE /* CalorieCop.app */,
+				C18F1DBF5E76454F8A3A6B75 /* CalorieCaptureWidget.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -234,6 +279,7 @@
 			children = (
 				A110000E238ABCDE /* NutritionCard.swift */,
 				A110000F238ABCDE /* CalorieBalanceView.swift */,
+				A1100027238ABCDE /* WidgetLayoutTunerPreview.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -267,6 +313,16 @@
 			path = Settings;
 			sourceTree = "<group>";
 		};
+		5C32ABBD0D2E45E8ACFE3004 /* CalorieCaptureWidget */ = {
+			isa = PBXGroup;
+			children = (
+				55483589285C437AB8EF829C /* CalorieCaptureWidget.swift */,
+				70F8AEDEF2054DA58A2DA7E9 /* CalorieCaptureWidget.entitlements */,
+				74465A8CBD9F495AAFF95A39 /* Info.plist */,
+			);
+			path = CalorieCaptureWidget;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -277,15 +333,34 @@
 				A1400002238ABCDE /* Sources */,
 				A1200001238ABCDE /* Frameworks */,
 				A1400003238ABCDE /* Resources */,
+				23BB57C46500464EAB490A08 /* Embed App Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				95BE417A5FB34EA5B9F28639 /* PBXTargetDependency */,
 			);
 			name = CalorieCop;
 			productName = CalorieCop;
 			productReference = A1100020238ABCDE /* CalorieCop.app */;
 			productType = "com.apple.product-type.application";
+		};
+		EC72E66458B44D5092861055 /* CalorieCaptureWidget */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 72A7CB73A71A4F21A3D084E2 /* Build configuration list for PBXNativeTarget "CalorieCaptureWidget" */;
+			buildPhases = (
+				0312086C14CA4868889CFACC /* Sources */,
+				F883970B424F445AA7FFBCF4 /* Frameworks */,
+				E1EC60F60199435586BDF16B /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = CalorieCaptureWidget;
+			productName = CalorieCaptureWidget;
+			productReference = C18F1DBF5E76454F8A3A6B75 /* CalorieCaptureWidget.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -299,6 +374,9 @@
 				TargetAttributes = {
 					A1400001238ABCDE = {
 						CreatedOnToolsVersion = 15.0;
+					};
+					EC72E66458B44D5092861055 = {
+						CreatedOnToolsVersion = 26.0;
 					};
 				};
 			};
@@ -317,6 +395,7 @@
 			projectRoot = "";
 			targets = (
 				A1400001238ABCDE /* CalorieCop */,
+				EC72E66458B44D5092861055 /* CalorieCaptureWidget */,
 			);
 		};
 /* End PBXProject section */
@@ -328,6 +407,13 @@
 			files = (
 				A1000011238ABCDE /* Assets.xcassets in Resources */,
 				A1000026238ABCDE /* migration_data.json in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E1EC60F60199435586BDF16B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -370,10 +456,27 @@
 				A1000023238ABCDE /* DebugLogger.swift in Sources */,
 				A1000024238ABCDE /* APIKeySetupView.swift in Sources */,
 				A1000025238ABCDE /* DataMigrationService.swift in Sources */,
+				A1000027238ABCDE /* WidgetLayoutTunerPreview.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		0312086C14CA4868889CFACC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				87965BED286C4D7DB7547707 /* CalorieCaptureWidget.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		95BE417A5FB34EA5B9F28639 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EC72E66458B44D5092861055 /* CalorieCaptureWidget */;
+			targetProxy = 99ED8706B5AC47CF8DFFE9AC /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		A1700001238ABCDE /* Debug */ = {
@@ -507,6 +610,7 @@
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CalorieCop/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = CalorieCapture;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CalorieCop需要使用相机来拍摄食物照片进行营养分析。";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "CalorieCop需要读取营养摄入与能量消耗数据，用于同步记录并计算每日热量。";
@@ -543,6 +647,7 @@
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CalorieCop/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = CalorieCapture;
 				INFOPLIST_KEY_NSCameraUsageDescription = "CalorieCop需要使用相机来拍摄食物照片进行营养分析。";
 				INFOPLIST_KEY_NSHealthShareUsageDescription = "CalorieCop需要读取营养摄入与能量消耗数据，用于同步记录并计算每日热量。";
@@ -567,6 +672,61 @@
 			};
 			name = Release;
 		};
+		364097C8455C45AFBCBB4769 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = CalorieCaptureWidget/CalorieCaptureWidget.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = T787QKW8X8;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CalorieCaptureWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zyyang116.caloriecapture.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B9E461709FC24E2A8D3C8CCB /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = CalorieCaptureWidget/CalorieCaptureWidget.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = T787QKW8X8;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = CalorieCaptureWidget/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.zyyang116.caloriecapture.widget;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -584,6 +744,15 @@
 			buildConfigurations = (
 				A1700003238ABCDE /* Debug */,
 				A1700004238ABCDE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		72A7CB73A71A4F21A3D084E2 /* Build configuration list for PBXNativeTarget "CalorieCaptureWidget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				364097C8455C45AFBCBB4769 /* Debug */,
+				B9E461709FC24E2A8D3C8CCB /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
