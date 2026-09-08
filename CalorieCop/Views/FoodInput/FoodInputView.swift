@@ -1196,6 +1196,7 @@ struct FoodInputView: View {
         }
 
         let trimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isDirectNutritionSummary = NutritionSummaryParser.canParse(trimmedInput)
         guard selectedImage != nil || !trimmedInput.isEmpty else {
             errorMessage = "请输入食物描述，或选择一张食物照片。"
             return
@@ -1208,7 +1209,7 @@ struct FoodInputView: View {
             return
         }
 
-        if selectedImage == nil && !isTextAPIConfigured {
+        if selectedImage == nil && !isDirectNutritionSummary && !isTextAPIConfigured {
             errorMessage = "文字解析需要设置 DeepSeek 或 MiniMax API 密钥，或设置 Qwen API 密钥作为备用。"
             showingSettings = true
             return

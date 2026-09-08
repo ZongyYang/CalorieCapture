@@ -1,6 +1,126 @@
 import Foundation
 import UIKit
 
+/// Parses meal summaries whose total energy and all three macronutrients were
+/// explicitly supplied by the user. This deliberately runs on device before
+/// any network request: the values are facts supplied by the user, not values
+/// that need an AI estimate.
+enum NutritionSummaryParser {
+    static func canParse(_ input: String) -> Bool {
+        parse(input) != nil
+    }
+
+    static func parse(_ input: String) -> NutritionInfo? {
+        let normalizedInput = input
+            .replacingOccurrences(of: "，", with: ",")
+            .replacingOccurrences(of: "；", with: ";")
+            .replacingOccurrences(of: "：", with: ":")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Nutrients described per 100 g are reference values, not the total
+        // intake that this shortcut is meant to record.
+        guard !normalizedInput.localizedCaseInsensitiveContains("每100"),
+              !normalizedInput.localizedCaseInsensitiveContains("per 100"),
+              let calories = totalCalories(in: normalizedInput),
+              let protein = value(
+                in: normalizedInput,
+                labels: ["蛋白质", "蛋白"]
+              ),
+              let carbohydrates = value(
+                in: normalizedInput,
+                labels: ["碳水化合物", "碳水"]
+              ),
+              let fat = value(
+                in: normalizedInput,
+                labels: ["脂肪"]
+              ) else {
+            return nil
+        }
+
+        let grams = intakeQuantity(in: normalizedInput) ?? 0
+        let quantityNote = grams > 0
+            ? "已直接采用输入的总热量和营养成分，未进行 AI 推断。"
+            : "已直接采用输入的总热量和营养成分，未进行 AI 推断；摄入量未提供，可按需编辑。"
+
+        return NutritionInfo(
+            foodName: foodName(from: normalizedInput),
+            grams: grams,
+            calories: calories,
+            protein: protein,
+            carbohydrates: carbohydrates,
+            fat: fat,
+            confidence: "manual",
+            notes: quantityNote
+        )
+    }
+
+    private static func totalCalories(in input: String) -> Double? {
+        guard let match = firstMatch(
+            pattern: #"(?:总\s*(?:热量|能量)|总计|合计|热量|能量)\s*(?:约|≈|=|为|是|:)?\s*([0-9]+(?:[\.,][0-9]+)?)\s*(千卡|大卡|卡路里|kcal|千焦|kj)"#,
+            in: input
+        ), let value = number(from: match, in: input, at: 1) else {
+            return nil
+        }
+
+        let unit = string(from: match, in: input, at: 2)?.lowercased() ?? ""
+        return unit == "千焦" || unit == "kj" ? value / 4.184 : value
+    }
+
+    private static func value(in input: String, labels: [String]) -> Double? {
+        let escapedLabels = labels.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+        let pattern = #"(?:"# + escapedLabels + #")\s*(?:含量)?\s*(?:约|≈|=|为|是|:)?\s*([0-9]+(?:[\.,][0-9]+)?)\s*(?:g|克)"#
+        guard let match = firstMatch(pattern: pattern, in: input) else { return nil }
+        return number(from: match, in: input, at: 1)
+    }
+
+    private static func intakeQuantity(in input: String) -> Double? {
+        guard let match = firstMatch(
+            pattern: #"(?:摄入量|食用量|份量|重量|净含量|规格)\s*(?:约|≈|=|为|是|:)?\s*([0-9]+(?:[\.,][0-9]+)?)\s*(?:g|克|ml|毫升)"#,
+            in: input
+        ) else {
+            return nil
+        }
+        return number(from: match, in: input, at: 1)
+    }
+
+    private static func foodName(from input: String) -> String {
+        let firstClause = input
+            .split(whereSeparator: { ",;。.!！？?\n".contains($0) })
+            .first
+            .map(String.init) ?? ""
+        let removablePrefixes = ["今天", "今日", "早餐", "午餐", "晚餐", "夜宵", "我吃了", "吃了", "记录"]
+        var name = firstClause.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        for prefix in removablePrefixes where name.hasPrefix(prefix) {
+            name = String(name.dropFirst(prefix.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: " :"))
+        }
+
+        return name.isEmpty || name.contains("热量") || name.contains("能量")
+            ? "本次摄入"
+            : name
+    }
+
+    private static func firstMatch(pattern: String, in input: String) -> NSTextCheckingResult? {
+        let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        let range = NSRange(input.startIndex..., in: input)
+        return expression?.firstMatch(in: input, options: [], range: range)
+    }
+
+    private static func number(from match: NSTextCheckingResult, in input: String, at index: Int) -> Double? {
+        guard let text = string(from: match, in: input, at: index) else { return nil }
+        return Double(text.replacingOccurrences(of: ",", with: "."))
+    }
+
+    private static func string(from match: NSTextCheckingResult, in input: String, at index: Int) -> String? {
+        let range = match.range(at: index)
+        guard range.location != NSNotFound, let swiftRange = Range(range, in: input) else {
+            return nil
+        }
+        return String(input[swiftRange])
+    }
+}
+
 final class MiniMaxService: AIServiceProtocol {
     // Endpoints are now dynamic based on user's region setting
     private var endpoint: URL { APIKeyManager.miniMaxEndpoint }
@@ -30,6 +150,11 @@ final class MiniMaxService: AIServiceProtocol {
         let trimmedInput = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedInput.isEmpty else {
             throw AIServiceError.parsingError("请输入食物描述")
+        }
+
+        if let summary = NutritionSummaryParser.parse(trimmedInput) {
+            logger.log("Used direct nutrition summary from text input")
+            return [summary]
         }
 
         guard APIKeyManager.isDeepSeekConfigured || APIKeyManager.isMiniMaxConfigured || APIKeyManager.isQwenConfigured else {

@@ -234,7 +234,9 @@ struct FoodConfirmationView: View {
         category = initialCategory
         mealType = initialMealType ?? FoodMealType.defaultType(for: originalNutrition.entryDate)
         preferenceKeyword = originalNutrition.foodName
-        preferenceDescription = "\(originalNutrition.grams.formattedGrams)\(initialCategory.quantityUnitSymbol)\(originalNutrition.foodName)"
+        preferenceDescription = originalNutrition.grams > 0
+            ? "\(originalNutrition.grams.formattedGrams)\(initialCategory.quantityUnitSymbol)\(originalNutrition.foodName)"
+            : "\(originalNutrition.calories.formattedCalories)kcal \(originalNutrition.foodName)"
     }
 
     private func applyMatchedPreference(_ preference: FoodPreference) {
@@ -734,6 +736,7 @@ struct FoodConfirmationView: View {
     private var confidenceIcon: String {
         if hasManualChanges { return "hand.raised.fill" }
         switch originalNutrition.confidence {
+        case "manual": return "hand.raised.fill"
         case "high": return "checkmark.circle.fill"
         case "medium": return "questionmark.circle.fill"
         default: return "exclamationmark.circle.fill"
@@ -743,6 +746,7 @@ struct FoodConfirmationView: View {
     private var confidenceColor: Color {
         if hasManualChanges { return .blue }
         switch originalNutrition.confidence {
+        case "manual": return .blue
         case "high": return .green
         case "medium": return .orange
         default: return .red
@@ -752,6 +756,7 @@ struct FoodConfirmationView: View {
     private var confidenceText: String {
         if hasManualChanges { return "手动" }
         switch originalNutrition.confidence {
+        case "manual": return "用户提供"
         case "high": return "高"
         case "medium": return "中"
         default: return "低"

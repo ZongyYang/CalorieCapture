@@ -530,6 +530,7 @@ struct DashboardView: View {
 
         let input = dashboardSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
         let selectedImage = dashboardSelectedImage
+        let isDirectNutritionSummary = NutritionSummaryParser.canParse(input)
         guard !input.isEmpty || selectedImage != nil else {
             isDashboardSearchFocused = true
             return
@@ -541,7 +542,8 @@ struct DashboardView: View {
                 return
             }
         } else {
-            guard APIKeyManager.isDeepSeekConfigured
+            guard isDirectNutritionSummary
+                    || APIKeyManager.isDeepSeekConfigured
                     || APIKeyManager.isMiniMaxConfigured
                     || APIKeyManager.isQwenConfigured else {
                 dashboardRecognitionError = "文字解析需要设置 DeepSeek、MiniMax 或 Qwen API 密钥。"
