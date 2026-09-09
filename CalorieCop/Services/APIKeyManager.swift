@@ -30,11 +30,61 @@ enum APIRegion: String, CaseIterable {
     }
 }
 
+enum TextParsingModel: String, CaseIterable, Identifiable {
+    /// Fast daily text recognition with DeepSeek's reasoning explicitly disabled.
+    case flash
+    /// A fast MiniMax alternative for users who prefer its responses.
+    case highspeed
+    /// DeepSeek's stronger model with reasoning enabled for more complex descriptions.
+    case pro
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .flash: return "Flash"
+        case .highspeed: return "Highspeed"
+        case .pro: return "Pro"
+        }
+    }
+
+    var providerName: String {
+        switch self {
+        case .flash, .pro: return "DeepSeek"
+        case .highspeed: return "MiniMax"
+        }
+    }
+
+    var speedDescription: String {
+        switch self {
+        case .flash:
+            return "最快：关闭推理，适合日常食物文字解析。"
+        case .highspeed:
+            return "快速：使用 MiniMax M2.7 Highspeed。"
+        case .pro:
+            return "更仔细：开启推理，适合复杂的餐食描述。"
+        }
+    }
+
+    var apiModelName: String {
+        switch self {
+        case .flash: return "deepseek-v4-flash"
+        case .highspeed: return "MiniMax-M2.7-highspeed"
+        case .pro: return "deepseek-v4-pro"
+        }
+    }
+
+    var usesDeepSeekReasoning: Bool {
+        self == .pro
+    }
+}
+
 enum APIKeyManager {
     private static let miniMaxKeyUserDefaultsKey = "user_minimax_api_key"
     private static let deepSeekKeyUserDefaultsKey = "user_deepseek_api_key"
     private static let qwenKeyUserDefaultsKey = "user_qwen_api_key"
     private static let regionUserDefaultsKey = "user_api_region"
+    static let textParsingModelUserDefaultsKey = "user_text_parsing_model"
 
     private static func normalizedKey(_ rawKey: String?) -> String? {
         guard let rawKey else { return nil }
@@ -142,6 +192,30 @@ enum APIKeyManager {
 
     static var hasUserQwenKey: Bool {
         normalizedKey(UserDefaults.standard.string(forKey: qwenKeyUserDefaultsKey)) != nil
+    }
+
+    // MARK: - Text Parsing Model
+
+    static var textParsingModel: TextParsingModel {
+        get {
+            guard let rawValue = UserDefaults.standard.string(forKey: textParsingModelUserDefaultsKey),
+                  let model = TextParsingModel(rawValue: rawValue) else {
+                return .flash
+            }
+            return model
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: textParsingModelUserDefaultsKey)
+        }
+    }
+
+    static func isTextParsingModelConfigured(_ model: TextParsingModel) -> Bool {
+        switch model {
+        case .flash, .pro:
+            return isDeepSeekConfigured
+        case .highspeed:
+            return isMiniMaxConfigured
+        }
     }
 
     // MARK: - Region Management

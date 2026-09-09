@@ -127,8 +127,6 @@ final class MiniMaxService: AIServiceProtocol {
     private var deepSeekEndpoint: URL { APIKeyManager.deepSeekEndpoint }
     private var qwenEndpoint: URL { APIKeyManager.qwenEndpoint }
     // MiniMax-M2.7-highspeed for text parsing
-    private let miniMaxTextModel = "MiniMax-M2.7-highspeed"
-    private let deepSeekTextModel = "deepseek-v4-flash"
     private let qwenTextModel = "qwen-plus"
     private let qwenVisionModel = "qwen3-vl-plus"
     private let logger = DebugLogger.shared
@@ -157,55 +155,43 @@ final class MiniMaxService: AIServiceProtocol {
             return [summary]
         }
 
-        guard APIKeyManager.isDeepSeekConfigured || APIKeyManager.isMiniMaxConfigured || APIKeyManager.isQwenConfigured else {
-            throw AIServiceError.apiKeyNotConfigured
+        let selectedModel = APIKeyManager.textParsingModel
+        guard APIKeyManager.isTextParsingModelConfigured(selectedModel) else {
+            throw AIServiceError.parsingError(
+                "已选择 \(selectedModel.displayName)，请先在设置中配置 \(selectedModel.providerName) API 密钥。"
+            )
         }
 
-        let systemPrompt = FoodParsingPrompt.systemPrompt(with: preferences)
-        var parseErrors: [String] = []
+        return try await parseFoodText(
+            trimmedInput,
+            using: selectedModel,
+            systemPrompt: FoodParsingPrompt.systemPrompt(with: preferences)
+        )
+    }
 
-        if APIKeyManager.isDeepSeekConfigured {
-            do {
-                return try await parseFoodTextWithDeepSeek(trimmedInput, systemPrompt: systemPrompt)
-            } catch {
-                logger.logError(error, context: "DeepSeek text parsing failed, trying MiniMax fallback")
-                parseErrors.append("DeepSeek：\(compactError(error))")
-            }
-        } else {
-            parseErrors.append("DeepSeek：未配置")
-        }
-
-        if APIKeyManager.isMiniMaxConfigured {
+    private func parseFoodText(
+        _ input: String,
+        using selectedModel: TextParsingModel,
+        systemPrompt: String
+    ) async throws -> [NutritionInfo] {
+        switch selectedModel {
+        case .flash, .pro:
+            return try await parseFoodTextWithDeepSeek(
+                input,
+                systemPrompt: systemPrompt,
+                model: selectedModel.apiModelName,
+                reasoningEnabled: selectedModel.usesDeepSeekReasoning
+            )
+        case .highspeed:
             let requestBody = MiniMaxRequest(
-                model: miniMaxTextModel,
+                model: selectedModel.apiModelName,
                 messages: [
                     Message(role: "system", content: .text(systemPrompt)),
-                    Message(role: "user", content: .text(trimmedInput))
+                    Message(role: "user", content: .text(input))
                 ]
             )
-
-            do {
-                return try await sendRequestMultiple(requestBody)
-            } catch {
-                logger.logError(error, context: "MiniMax text parsing failed, trying Qwen fallback")
-                parseErrors.append("MiniMax：\(compactError(error))")
-            }
-        } else {
-            parseErrors.append("MiniMax：未配置")
+            return try await sendRequestMultiple(requestBody)
         }
-
-        if APIKeyManager.isQwenConfigured {
-            do {
-                return try await parseFoodTextWithQwen(trimmedInput, systemPrompt: systemPrompt)
-            } catch {
-                logger.logError(error, context: "Qwen text parsing failed")
-                parseErrors.append("Qwen：\(compactError(error))")
-            }
-        } else {
-            parseErrors.append("Qwen：未配置")
-        }
-
-        throw AIServiceError.parsingError("文字解析失败。\n\(parseErrors.joined(separator: "\n"))")
     }
 
     func parseFoodImage(_ image: UIImage, additionalContext: String? = nil, preferences: [FoodPreference] = []) async throws -> NutritionInfo {
@@ -312,13 +298,17 @@ final class MiniMaxService: AIServiceProtocol {
         return try decodeNutritionList(from: content, context: "Qwen image")
     }
 
-    private func parseFoodTextWithQwen(_ input: String, systemPrompt: String) async throws -> [NutritionInfo] {
+    private func parseFoodTextWithQwen(
+        _ input: String,
+        systemPrompt: String,
+        model: String? = nil
+    ) async throws -> [NutritionInfo] {
         guard let apiKey = APIKeyManager.qwenAPIKey, !apiKey.isEmpty else {
             throw AIServiceError.apiKeyNotConfigured
         }
 
         let requestBody: [String: Any] = [
-            "model": qwenTextModel,
+            "model": model ?? qwenTextModel,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": input]
@@ -383,18 +373,24 @@ final class MiniMaxService: AIServiceProtocol {
         return try decodeNutritionList(from: content, context: "Qwen text")
     }
 
-    private func parseFoodTextWithDeepSeek(_ input: String, systemPrompt: String) async throws -> [NutritionInfo] {
+    private func parseFoodTextWithDeepSeek(
+        _ input: String,
+        systemPrompt: String,
+        model: String,
+        reasoningEnabled: Bool
+    ) async throws -> [NutritionInfo] {
         guard let apiKey = APIKeyManager.deepSeekAPIKey, !apiKey.isEmpty else {
             throw AIServiceError.apiKeyNotConfigured
         }
 
         let requestBody: [String: Any] = [
-            "model": deepSeekTextModel,
+            "model": model,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": input]
             ],
             "temperature": 0.1,
+            "thinking": ["type": reasoningEnabled ? "enabled" : "disabled"],
             "stream": false
         ]
 

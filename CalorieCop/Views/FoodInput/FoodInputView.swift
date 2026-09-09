@@ -110,7 +110,7 @@ struct FoodInputView: View {
     }
 
     private var isTextAPIConfigured: Bool {
-        APIKeyManager.isDeepSeekConfigured || APIKeyManager.isMiniMaxConfigured || APIKeyManager.isQwenConfigured
+        APIKeyManager.isTextParsingModelConfigured(APIKeyManager.textParsingModel)
     }
 
     private var isImageAPIConfigured: Bool {
@@ -1034,23 +1034,11 @@ struct FoodInputView: View {
                     Divider()
                         .frame(height: 22)
 
-                    if isLoading {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 30, height: 30)
-                            .accessibilityLabel("正在识别")
-                    } else {
-                        Button {
-                            recognizeFromSearch()
-                        } label: {
-                            Image(systemName: "sparkles")
-                                .frame(width: 30, height: 30)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.primary)
-                        .accessibilityLabel("AI识别")
-                    }
+                    TextRecognitionActionButton(
+                        isProcessing: isLoading,
+                        isEnabled: canRecognizeFromSearch,
+                        action: recognizeFromSearch
+                    )
 
                     Button {
                         openCameraFromSearch()
@@ -1210,7 +1198,8 @@ struct FoodInputView: View {
         }
 
         if selectedImage == nil && !isDirectNutritionSummary && !isTextAPIConfigured {
-            errorMessage = "文字解析需要设置 DeepSeek 或 MiniMax API 密钥，或设置 Qwen API 密钥作为备用。"
+            let model = APIKeyManager.textParsingModel
+            errorMessage = "当前选择 \(model.displayName)，请先配置 \(model.providerName) API 密钥。"
             showingSettings = true
             return
         }

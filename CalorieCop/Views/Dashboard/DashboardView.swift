@@ -346,24 +346,11 @@ struct DashboardView: View {
                     Divider()
                         .frame(height: 22)
 
-                    if isDashboardRecognizing {
-                        ProgressView()
-                            .controlSize(.small)
-                            .frame(width: 30, height: 30)
-                            .accessibilityLabel("正在识别")
-                    } else {
-                        Button {
-                            recognizeFromDashboardSearch()
-                        } label: {
-                            Image(systemName: "sparkles")
-                                .frame(width: 30, height: 30)
-                                .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.primary)
-                        .opacity(canRecognizeFromDashboardSearch ? 1 : 0.45)
-                        .accessibilityLabel("AI识别")
-                    }
+                    TextRecognitionActionButton(
+                        isProcessing: isDashboardRecognizing,
+                        isEnabled: canRecognizeFromDashboardSearch,
+                        action: recognizeFromDashboardSearch
+                    )
 
                     Button {
                         if UIImagePickerController.isSourceTypeAvailable(.camera) {
@@ -543,10 +530,9 @@ struct DashboardView: View {
             }
         } else {
             guard isDirectNutritionSummary
-                    || APIKeyManager.isDeepSeekConfigured
-                    || APIKeyManager.isMiniMaxConfigured
-                    || APIKeyManager.isQwenConfigured else {
-                dashboardRecognitionError = "文字解析需要设置 DeepSeek、MiniMax 或 Qwen API 密钥。"
+                    || APIKeyManager.isTextParsingModelConfigured(APIKeyManager.textParsingModel) else {
+                let model = APIKeyManager.textParsingModel
+                dashboardRecognitionError = "当前选择 \(model.displayName)，请先配置 \(model.providerName) API 密钥。"
                 return
             }
         }
@@ -902,6 +888,55 @@ struct DashboardView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16))
             } else {
                 FoodListView()
+            }
+        }
+    }
+}
+
+/// Tap to recognize the current search input; long-press to choose the text model.
+/// The selection is shared by the Today and Record search bars.
+struct TextRecognitionActionButton: View {
+    let isProcessing: Bool
+    let isEnabled: Bool
+    let action: () -> Void
+
+    @AppStorage(APIKeyManager.textParsingModelUserDefaultsKey)
+    private var selectedModelRawValue = TextParsingModel.flash.rawValue
+
+    private var selectedModel: TextParsingModel {
+        TextParsingModel(rawValue: selectedModelRawValue) ?? .flash
+    }
+
+    var body: some View {
+        if isProcessing {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 30, height: 30)
+                .accessibilityLabel("正在识别")
+        } else {
+            Button {
+                guard isEnabled else { return }
+                action()
+            } label: {
+                Image(systemName: "sparkles")
+                    .frame(width: 30, height: 30)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.primary)
+            .accessibilityLabel("AI识别")
+            .accessibilityHint("长按可切换文字识别模型")
+            .contextMenu {
+                ForEach(TextParsingModel.allCases) { model in
+                    Button {
+                        selectedModelRawValue = model.rawValue
+                    } label: {
+                        Label(
+                            model.displayName,
+                            systemImage: model == selectedModel ? "checkmark" : "circle"
+                        )
+                    }
+                }
             }
         }
     }
