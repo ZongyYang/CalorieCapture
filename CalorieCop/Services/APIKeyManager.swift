@@ -182,16 +182,30 @@ enum APIKeyManager {
         UserDefaults.standard.removeObject(forKey: qwenKeyUserDefaultsKey)
     }
 
+    /// Only keys the user explicitly entered in the app are exposed here.
+    /// Developer defaults and environment keys remain hidden in API Settings.
+    static var userMiniMaxAPIKey: String? {
+        normalizedKey(UserDefaults.standard.string(forKey: miniMaxKeyUserDefaultsKey))
+    }
+
+    static var userDeepSeekAPIKey: String? {
+        normalizedKey(UserDefaults.standard.string(forKey: deepSeekKeyUserDefaultsKey))
+    }
+
+    static var userQwenAPIKey: String? {
+        normalizedKey(UserDefaults.standard.string(forKey: qwenKeyUserDefaultsKey))
+    }
+
     static var hasUserMiniMaxKey: Bool {
-        normalizedKey(UserDefaults.standard.string(forKey: miniMaxKeyUserDefaultsKey)) != nil
+        userMiniMaxAPIKey != nil
     }
 
     static var hasUserDeepSeekKey: Bool {
-        normalizedKey(UserDefaults.standard.string(forKey: deepSeekKeyUserDefaultsKey)) != nil
+        userDeepSeekAPIKey != nil
     }
 
     static var hasUserQwenKey: Bool {
-        normalizedKey(UserDefaults.standard.string(forKey: qwenKeyUserDefaultsKey)) != nil
+        userQwenAPIKey != nil
     }
 
     // MARK: - Text Parsing Model
@@ -239,6 +253,11 @@ enum APIKeyManager {
 
     static var deepSeekEndpoint: URL {
         URL(string: "https://api.deepseek.com/chat/completions")!
+    }
+
+    /// Responses API supports both server-side web search and vision input.
+    static var deepSeekResponsesEndpoint: URL {
+        URL(string: "https://api.deepseek.com/responses")!
     }
 
     static var qwenEndpoint: URL {

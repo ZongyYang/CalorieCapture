@@ -2506,8 +2506,8 @@ struct FoodEntryEditView: View {
             return
         }
 
-        if image != nil, !APIKeyManager.isQwenConfigured {
-            errorMessage = "图片识别需要设置 Qwen API 密钥。"
+        if image != nil, !APIKeyManager.isDeepSeekConfigured {
+            errorMessage = "图片识别需要设置 DeepSeek API 密钥。"
             aiStatusMessage = nil
             showingSettings = true
             return

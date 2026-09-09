@@ -6,6 +6,7 @@ enum FoodParsingPrompt {
 
 规则：无克重则估算份量。数值保留1位小数。
 时间："昨天"=days_ago:1，"前天"=2，默认=0
+若品牌、餐厅菜品或包装规格信息不足以可靠估算，可联网检索核实；普通描述不必联网。
 
 返回格式（必须是数组）：
 [{"food_name":"食物名","grams":100,"calories":200,"protein":10,"carbohydrates":20,"fat":5,"days_ago":0}]

@@ -524,8 +524,8 @@ struct DashboardView: View {
         }
 
         if selectedImage != nil {
-            guard APIKeyManager.isQwenConfigured else {
-                dashboardRecognitionError = "图片识别需要设置 Qwen API 密钥。"
+            guard APIKeyManager.isDeepSeekConfigured else {
+                dashboardRecognitionError = "图片识别需要设置 DeepSeek API 密钥。"
                 return
             }
         } else {
@@ -893,12 +893,31 @@ struct DashboardView: View {
     }
 }
 
-/// Tap to recognize the current search input; long-press to choose the text model.
-/// The selection is shared by the Today and Record search bars.
+/// Tap to run the current AI action; long-press to choose the text model.
+/// The selection is shared by Today, Record, and AI Advisor.
 struct TextRecognitionActionButton: View {
     let isProcessing: Bool
     let isEnabled: Bool
     let action: () -> Void
+    let accessibilityLabel: String
+    let processingAccessibilityLabel: String
+    let modelSelectionHint: String
+
+    init(
+        isProcessing: Bool,
+        isEnabled: Bool,
+        action: @escaping () -> Void,
+        accessibilityLabel: String = "AI识别",
+        processingAccessibilityLabel: String = "正在识别",
+        modelSelectionHint: String = "长按可切换文字识别模型"
+    ) {
+        self.isProcessing = isProcessing
+        self.isEnabled = isEnabled
+        self.action = action
+        self.accessibilityLabel = accessibilityLabel
+        self.processingAccessibilityLabel = processingAccessibilityLabel
+        self.modelSelectionHint = modelSelectionHint
+    }
 
     @AppStorage(APIKeyManager.textParsingModelUserDefaultsKey)
     private var selectedModelRawValue = TextParsingModel.flash.rawValue
@@ -912,7 +931,7 @@ struct TextRecognitionActionButton: View {
             ProgressView()
                 .controlSize(.small)
                 .frame(width: 30, height: 30)
-                .accessibilityLabel("正在识别")
+                .accessibilityLabel(processingAccessibilityLabel)
         } else {
             Button {
                 guard isEnabled else { return }
@@ -924,8 +943,8 @@ struct TextRecognitionActionButton: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.primary)
-            .accessibilityLabel("AI识别")
-            .accessibilityHint("长按可切换文字识别模型")
+            .accessibilityLabel(accessibilityLabel)
+            .accessibilityHint(modelSelectionHint)
             .contextMenu {
                 ForEach(TextParsingModel.allCases) { model in
                     Button {

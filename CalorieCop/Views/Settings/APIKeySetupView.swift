@@ -163,42 +163,39 @@ struct APIKeySetupView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     .shadow(color: .black.opacity(0.05), radius: 5)
 
-                    // MiniMax API Section
                     let _ = refreshTrigger  // Force refresh
-                    apiKeySection(
-                        title: "MiniMax API",
-                        subtitle: "用于文字解析和 AI 顾问",
-                        key: $miniMaxKey,
-                        showKey: $showMiniMaxKey,
-                        isConfigured: APIKeyManager.isMiniMaxConfigured,
-                        hasUserKey: APIKeyManager.hasUserMiniMaxKey,
-                        instructions: miniMaxInstructions,
-                        websiteURL: miniMaxWebsiteURL
-                    )
 
-                    // DeepSeek API Section
-                    apiKeySection(
-                        title: "DeepSeek API",
-                        subtitle: "用于文字解析和 AI 顾问",
-                        key: $deepSeekKey,
-                        showKey: $showDeepSeekKey,
-                        isConfigured: APIKeyManager.isDeepSeekConfigured,
-                        hasUserKey: APIKeyManager.hasUserDeepSeekKey,
-                        instructions: deepSeekInstructions,
-                        websiteURL: deepSeekWebsiteURL
-                    )
+                    VStack(alignment: .leading, spacing: 12) {
+                        // DeepSeek API Section
+                        apiKeySection(
+                            title: "DeepSeek API",
+                            subtitle: "用于文字、图片食物识别、按需联网检索和 AI 顾问",
+                            key: $deepSeekKey,
+                            showKey: $showDeepSeekKey,
+                            isConfigured: APIKeyManager.isDeepSeekConfigured,
+                            hasUserKey: APIKeyManager.hasUserDeepSeekKey
+                        )
 
-                    // Qwen API Section
-                    apiKeySection(
-                        title: "阿里云 Qwen API",
-                        subtitle: "用于图片食物识别；也可作为文字解析备用",
-                        key: $qwenKey,
-                        showKey: $showQwenKey,
-                        isConfigured: APIKeyManager.isQwenConfigured,
-                        hasUserKey: APIKeyManager.hasUserQwenKey,
-                        instructions: qwenInstructions,
-                        websiteURL: qwenWebsiteURL
-                    )
+                        // Qwen API Section
+                        apiKeySection(
+                            title: "阿里云 Qwen API",
+                            subtitle: "用于 AI 顾问图片分析（可选）",
+                            key: $qwenKey,
+                            showKey: $showQwenKey,
+                            isConfigured: APIKeyManager.isQwenConfigured,
+                            hasUserKey: APIKeyManager.hasUserQwenKey
+                        )
+
+                        // MiniMax API Section
+                        apiKeySection(
+                            title: "MiniMax API",
+                            subtitle: "用于 Highspeed 文字解析和 AI 顾问",
+                            key: $miniMaxKey,
+                            showKey: $showMiniMaxKey,
+                            isConfigured: APIKeyManager.isMiniMaxConfigured,
+                            hasUserKey: APIKeyManager.hasUserMiniMaxKey
+                        )
+                    }
 
                     // Save button
                     Button {
@@ -308,10 +305,16 @@ struct APIKeySetupView: View {
                 }
             }
             .onAppear {
-                // Load existing settings
                 selectedRegion = APIKeyManager.region
-                // Don't show anything in input fields for existing keys
-                // The "已配置" badge indicates the key is set
+                // User-entered values stay masked in SecureField until the
+                // matching eye button is tapped. Developer defaults are not
+                // copied into editable fields.
+                miniMaxKey = APIKeyManager.userMiniMaxAPIKey ?? ""
+                deepSeekKey = APIKeyManager.userDeepSeekAPIKey ?? ""
+                qwenKey = APIKeyManager.userQwenAPIKey ?? ""
+                showMiniMaxKey = false
+                showDeepSeekKey = false
+                showQwenKey = false
             }
         }
     }
@@ -325,86 +328,13 @@ struct APIKeySetupView: View {
         return regionChanged || hasMiniMax || hasDeepSeek || hasQwen
     }
 
-    // MARK: - Region-specific instructions
-
-    private var miniMaxInstructions: [String] {
-        switch selectedRegion {
-        case .international:
-            return [
-                "1. 访问 minimax.io 并注册账号",
-                "2. 进入控制台 → API Keys",
-                "3. 创建新的 API Key",
-                "4. 复制密钥并粘贴到下方"
-            ]
-        case .china:
-            return [
-                "1. 访问 minimaxi.com 并注册账号",
-                "2. 进入控制台 → API Keys",
-                "3. 创建新的 API Key",
-                "4. 复制密钥并粘贴到下方"
-            ]
-        }
-    }
-
-    private var miniMaxWebsiteURL: String {
-        switch selectedRegion {
-        case .international:
-            return "https://www.minimax.io"
-        case .china:
-            return "https://www.minimaxi.com"
-        }
-    }
-
-    private var qwenInstructions: [String] {
-        switch selectedRegion {
-        case .international:
-            return [
-                "1. 访问阿里云国际站 DashScope",
-                "2. 进入控制台 → API-KEY 管理",
-                "3. 创建新的 API Key",
-                "4. 复制密钥并粘贴到下方"
-            ]
-        case .china:
-            return [
-                "1. 访问阿里云 DashScope 并注册",
-                "2. 进入控制台 → API-KEY 管理",
-                "3. 创建新的 API Key",
-                "4. 复制密钥并粘贴到下方"
-            ]
-        }
-    }
-
-    private var deepSeekInstructions: [String] {
-        [
-            "1. 访问 DeepSeek 开放平台并登录",
-            "2. 进入 API Keys",
-            "3. 创建新的 API Key",
-            "4. 复制密钥并粘贴到下方"
-        ]
-    }
-
-    private var deepSeekWebsiteURL: String {
-        "https://platform.deepseek.com/api_keys"
-    }
-
-    private var qwenWebsiteURL: String {
-        switch selectedRegion {
-        case .international:
-            return "https://www.alibabacloud.com/product/dashscope"
-        case .china:
-            return "https://dashscope.console.aliyun.com"
-        }
-    }
-
     private func apiKeySection(
         title: String,
         subtitle: String,
         key: Binding<String>,
         showKey: Binding<Bool>,
         isConfigured: Bool,
-        hasUserKey: Bool,
-        instructions: [String],
-        websiteURL: String
+        hasUserKey: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
@@ -432,31 +362,6 @@ struct APIKeySetupView: View {
                         .foregroundStyle(.orange)
                 }
             }
-
-            // Instructions
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(instructions, id: \.self) { step in
-                    Text(step)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Button {
-                    if let url = URL(string: websiteURL) {
-                        UIApplication.shared.open(url)
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: "arrow.up.right.square")
-                        Text("打开官网")
-                    }
-                    .font(.caption)
-                }
-                .padding(.top, 4)
-            }
-            .padding()
-            .background(Color(.systemGray6))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
 
             // Key input
             HStack {

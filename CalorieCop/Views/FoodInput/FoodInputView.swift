@@ -114,7 +114,7 @@ struct FoodInputView: View {
     }
 
     private var isImageAPIConfigured: Bool {
-        APIKeyManager.isQwenConfigured
+        APIKeyManager.isDeepSeekConfigured
     }
 
     private var isCameraAvailable: Bool {
@@ -375,7 +375,7 @@ struct FoodInputView: View {
                 .font(.title2)
                 .fontWeight(.bold)
 
-            Text("请至少设置 DeepSeek 或 MiniMax API 密钥以启用文字解析。Qwen 用于图片识别，也可作为文字解析备用。")
+            Text("DeepSeek 用于文字、图片食物识别和按需联网检索；Highspeed 文字模式需要 MiniMax。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -384,7 +384,7 @@ struct FoodInputView: View {
             VStack(alignment: .leading, spacing: 12) {
                     apiStatusRow(
                         name: "DeepSeek API",
-                        purpose: "文字解析和 AI 顾问",
+                        purpose: "文字、图片识别和按需联网检索",
                         isConfigured: APIKeyManager.isDeepSeekConfigured
                     )
                     apiStatusRow(
@@ -394,7 +394,7 @@ struct FoodInputView: View {
                     )
                     apiStatusRow(
                         name: "Qwen API",
-                        purpose: "图片识别和文字解析备用",
+                        purpose: "AI 顾问图片分析（可选）",
                         isConfigured: APIKeyManager.isQwenConfigured
                     )
             }
@@ -457,14 +457,14 @@ struct FoodInputView: View {
 
     private var imageInputSection: some View {
         VStack(spacing: 12) {
-            // Warning if Qwen API not configured
+            // Warning if DeepSeek API not configured
             // Use apiKeyCheckTrigger to force refresh
             let _ = apiKeyCheckTrigger
             if !isImageAPIConfigured {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                    Text("图片识别需要设置 Qwen API")
+                    Text("图片识别需要设置 DeepSeek API")
                         .font(.caption)
                     Spacer()
                     Button("设置") {
@@ -1192,7 +1192,7 @@ struct FoodInputView: View {
 
         // Check API keys before parsing
         if selectedImage != nil && !isImageAPIConfigured {
-            errorMessage = "图片识别需要设置 Qwen API 密钥。请在设置中配置。"
+            errorMessage = "图片识别需要设置 DeepSeek API 密钥。请在设置中配置。"
             showingSettings = true
             return
         }
@@ -1211,7 +1211,7 @@ struct FoodInputView: View {
             let nutritionList: [NutritionInfo]
 
             if let image = selectedImage {
-                // Image parsing now supports multiple items via Qwen VL Plus
+                // Image parsing uses DeepSeek Vision and supports multiple items.
                 nutritionList = try await aiService.parseFoodImageMultiple(
                     image,
                     additionalContext: trimmedInput.isEmpty ? nil : trimmedInput,
@@ -1250,7 +1250,7 @@ struct FoodInputView: View {
     private func clearSelectedImage() {
         selectedImage = nil
         selectedPhoto = nil
-        if errorMessage == "图片识别需要设置 Qwen API 密钥。请在设置中配置。" {
+        if errorMessage == "图片识别需要设置 DeepSeek API 密钥。请在设置中配置。" {
             errorMessage = nil
         }
     }
@@ -2713,8 +2713,8 @@ struct FoodPreferenceEditView: View {
             return
         }
 
-        if image != nil, !APIKeyManager.isQwenConfigured {
-            errorMessage = "图片识别需要设置 Qwen API 密钥。"
+        if image != nil, !APIKeyManager.isDeepSeekConfigured {
+            errorMessage = "图片识别需要设置 DeepSeek API 密钥。"
             aiStatusMessage = nil
             showingSettings = true
             return

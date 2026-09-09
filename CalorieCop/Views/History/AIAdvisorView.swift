@@ -273,24 +273,27 @@ struct AIAdvisorView: View {
                             .frame(height: 22)
 
                         if isLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                                .frame(width: 30, height: 30)
-                                .accessibilityLabel("正在分析")
+                            TextRecognitionActionButton(
+                                isProcessing: true,
+                                isEnabled: false,
+                                action: {},
+                                accessibilityLabel: "发送给 AI 顾问",
+                                processingAccessibilityLabel: "正在分析",
+                                modelSelectionHint: "长按可切换 AI 顾问模型"
+                            )
                         } else {
-                            Button {
-                                Task {
-                                    await sendMessage()
-                                }
-                            } label: {
-                                Image(systemName: "sparkles")
-                                    .frame(width: 30, height: 30)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(canSendMessage ? Color.blue : Color.secondary)
-                            .disabled(!canSendMessage)
-                            .accessibilityLabel("发送给AI顾问")
+                            TextRecognitionActionButton(
+                                isProcessing: false,
+                                isEnabled: canSendMessage,
+                                action: {
+                                    Task {
+                                        await sendMessage()
+                                    }
+                                },
+                                accessibilityLabel: "发送给 AI 顾问",
+                                processingAccessibilityLabel: "正在分析",
+                                modelSelectionHint: "长按可切换 AI 顾问模型"
+                            )
                         }
 
                         Button {
@@ -802,56 +805,43 @@ struct AIAdvisorView: View {
         }
 
         let messages = advisorMessages(for: question)
-        var errors: [String] = []
-
-        if let deepSeekAPIKey = APIKeyManager.deepSeekAPIKey, !deepSeekAPIKey.isEmpty {
-            do {
-                let content = try await requestDeepSeekAdvisor(apiKey: deepSeekAPIKey, messages: messages)
-                onContent(content)
-                return content
-            } catch {
-                DebugLogger.shared.logError(error, context: "AI Advisor DeepSeek failed")
-                errors.append("DeepSeek：\(compactChatError(error))")
-            }
+        let selectedModel = APIKeyManager.textParsingModel
+        guard APIKeyManager.isTextParsingModelConfigured(selectedModel) else {
+            throw AIServiceError.chatError(
+                "当前选择 \(selectedModel.displayName)，请先在设置中配置 \(selectedModel.providerName) API 密钥。"
+            )
         }
 
-        if let miniMaxAPIKey = APIKeyManager.miniMaxAPIKey, !miniMaxAPIKey.isEmpty {
+        switch selectedModel {
+        case .flash, .pro:
+            guard let apiKey = APIKeyManager.deepSeekAPIKey, !apiKey.isEmpty else {
+                throw AIServiceError.apiKeyNotConfigured
+            }
+            let content = try await requestDeepSeekAdvisor(
+                apiKey: apiKey,
+                messages: messages,
+                model: selectedModel.apiModelName,
+                reasoningEnabled: selectedModel.usesDeepSeekReasoning
+            )
+            onContent(content)
+            return content
+        case .highspeed:
+            guard let apiKey = APIKeyManager.miniMaxAPIKey, !apiKey.isEmpty else {
+                throw AIServiceError.apiKeyNotConfigured
+            }
             do {
                 return try await requestMiniMaxStreaming(
-                    apiKey: miniMaxAPIKey,
+                    apiKey: apiKey,
                     messages: messages,
                     onContent: onContent
                 )
             } catch {
                 DebugLogger.shared.logError(error, context: "AI Advisor MiniMax streaming failed")
-                errors.append("MiniMax流式：\(compactChatError(error))")
-            }
-
-            do {
-                let content = try await requestMiniMaxNonStreaming(apiKey: miniMaxAPIKey, messages: messages)
+                let content = try await requestMiniMaxNonStreaming(apiKey: apiKey, messages: messages)
                 onContent(content)
                 return content
-            } catch {
-                DebugLogger.shared.logError(error, context: "AI Advisor MiniMax non-streaming failed")
-                errors.append("MiniMax普通：\(compactChatError(error))")
             }
         }
-
-        if let qwenAPIKey = APIKeyManager.qwenAPIKey, !qwenAPIKey.isEmpty {
-            do {
-                let content = try await requestQwenAdvisor(apiKey: qwenAPIKey, messages: messages)
-                onContent(content)
-                return content
-            } catch {
-                DebugLogger.shared.logError(error, context: "AI Advisor Qwen failed")
-                errors.append("Qwen：\(compactChatError(error))")
-            }
-        }
-
-        if errors.isEmpty {
-            throw AIServiceError.apiKeyNotConfigured
-        }
-        throw AIServiceError.chatError("AI 顾问请求失败：\(errors.joined(separator: "；"))")
     }
 
     private func advisorMessages(for question: String) -> [[String: String]] {
@@ -1049,11 +1039,17 @@ struct AIAdvisorView: View {
         )
     }
 
-    private func requestDeepSeekAdvisor(apiKey: String, messages: [[String: String]]) async throws -> String {
+    private func requestDeepSeekAdvisor(
+        apiKey: String,
+        messages: [[String: String]],
+        model: String,
+        reasoningEnabled: Bool
+    ) async throws -> String {
         let requestBody: [String: Any] = [
-            "model": "deepseek-v4-flash",
+            "model": model,
             "messages": messages,
             "temperature": 0.7,
+            "thinking": ["type": reasoningEnabled ? "enabled" : "disabled"],
             "stream": false
         ]
 

@@ -124,11 +124,11 @@ enum NutritionSummaryParser {
 final class MiniMaxService: AIServiceProtocol {
     // Endpoints are now dynamic based on user's region setting
     private var endpoint: URL { APIKeyManager.miniMaxEndpoint }
-    private var deepSeekEndpoint: URL { APIKeyManager.deepSeekEndpoint }
+    private var deepSeekResponsesEndpoint: URL { APIKeyManager.deepSeekResponsesEndpoint }
     private var qwenEndpoint: URL { APIKeyManager.qwenEndpoint }
     // MiniMax-M2.7-highspeed for text parsing
     private let qwenTextModel = "qwen-plus"
-    private let qwenVisionModel = "qwen3-vl-plus"
+    private let deepSeekVisionModel = "deepseek-v4-flash-vision-exp"
     private let logger = DebugLogger.shared
 
     func parseFoodInput(_ input: String) async throws -> NutritionInfo {
@@ -195,7 +195,7 @@ final class MiniMaxService: AIServiceProtocol {
     }
 
     func parseFoodImage(_ image: UIImage, additionalContext: String? = nil, preferences: [FoodPreference] = []) async throws -> NutritionInfo {
-        // Use Qwen VL Plus for image parsing (MiniMax vision models not available via API)
+        // Food photos use DeepSeek Vision, independent of the text model selected in the UI.
         let items = try await parseFoodImageMultiple(image, additionalContext: additionalContext, preferences: preferences)
         guard let first = items.first else {
             throw AIServiceError.parsingError("未能识别图片中的食物")
@@ -204,7 +204,7 @@ final class MiniMaxService: AIServiceProtocol {
     }
 
     func parseFoodImageMultiple(_ image: UIImage, additionalContext: String? = nil, preferences: [FoodPreference] = []) async throws -> [NutritionInfo] {
-        guard let apiKey = APIKeyManager.qwenAPIKey, !apiKey.isEmpty else {
+        guard let apiKey = APIKeyManager.deepSeekAPIKey, !apiKey.isEmpty else {
             throw AIServiceError.apiKeyNotConfigured
         }
 
@@ -224,78 +224,22 @@ final class MiniMaxService: AIServiceProtocol {
 
         let systemPrompt = FoodParsingPrompt.systemPrompt(with: preferences)
 
-        // Build Qwen VL Plus request (OpenAI-compatible format)
-        let requestBody: [String: Any] = [
-            "model": qwenVisionModel,
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": [
-                    ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64String)"]],
-                    ["type": "text", "text": userPrompt]
-                ]]
+        return try await requestDeepSeekResponse(
+            model: deepSeekVisionModel,
+            systemPrompt: systemPrompt,
+            content: [
+                ["type": "input_text", "text": userPrompt],
+                [
+                    "type": "input_image",
+                    "image_url": "data:image/jpeg;base64,\(base64String)",
+                    "detail": "low"
+                ]
             ],
-            "temperature": 0.1,
-            "stream": false
-        ]
-
-        // Use dynamic endpoint based on user's region setting
-        var request = URLRequest(url: qwenEndpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        logger.logAPIRequest(endpoint: qwenEndpoint.absoluteString, body: "model=\(qwenVisionModel), imageBytes=\(imageData.count)")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIServiceError.invalidResponse
-        }
-
-        // Debug - log raw response
-        let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
-        logger.logAPIResponse(statusCode: httpResponse.statusCode, body: rawString)
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw AIServiceError.parsingError("Qwen API Error (\(httpResponse.statusCode)): \(rawString)")
-        }
-
-        // Parse Qwen response (OpenAI-compatible format)
-        struct QwenResponse: Decodable {
-            let choices: [Choice]?
-            let error: QwenError?
-
-            struct Choice: Decodable {
-                let message: Message
-                struct Message: Decodable {
-                    let content: String
-                }
-            }
-
-            struct QwenError: Decodable {
-                let message: String?
-                let code: String?
-            }
-        }
-
-        let qwenResponse: QwenResponse
-        do {
-            qwenResponse = try JSONDecoder().decode(QwenResponse.self, from: data)
-        } catch {
-            logger.logError(error, context: "Qwen response decode")
-            throw AIServiceError.parsingError("Qwen响应格式错误: \(rawString.prefix(300))")
-        }
-
-        // Check for API error
-        if let error = qwenResponse.error {
-            throw AIServiceError.parsingError("Qwen错误: \(error.message ?? error.code ?? "未知错误")")
-        }
-
-        guard let content = qwenResponse.choices?.first?.message.content else {
-            throw AIServiceError.parsingError("Qwen返回为空: \(rawString.prefix(300))")
-        }
-
-        return try decodeNutritionList(from: content, context: "Qwen image")
+            reasoningEffort: "none",
+            imageBytes: imageData.count,
+            apiKey: apiKey,
+            context: "DeepSeek image"
+        )
     }
 
     private func parseFoodTextWithQwen(
@@ -383,60 +327,67 @@ final class MiniMaxService: AIServiceProtocol {
             throw AIServiceError.apiKeyNotConfigured
         }
 
+        return try await requestDeepSeekResponse(
+            model: model,
+            systemPrompt: systemPrompt,
+            content: [["type": "input_text", "text": input]],
+            reasoningEffort: reasoningEnabled ? "high" : "none",
+            apiKey: apiKey,
+            context: "DeepSeek text"
+        )
+    }
+
+    /// Uses DeepSeek's Responses API so the model can automatically look up
+    /// branded or otherwise uncertain food details before returning nutrition JSON.
+    private func requestDeepSeekResponse(
+        model: String,
+        systemPrompt: String,
+        content: [[String: Any]],
+        reasoningEffort: String,
+        imageBytes: Int? = nil,
+        apiKey: String,
+        context: String
+    ) async throws -> [NutritionInfo] {
         let requestBody: [String: Any] = [
             "model": model,
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": input]
-            ],
+            "instructions": systemPrompt,
+            "input": [["role": "user", "content": content]],
+            "reasoning": ["effort": reasoningEffort],
             "temperature": 0.1,
-            "thinking": ["type": reasoningEnabled ? "enabled" : "disabled"],
+            // The server decides whether a search is useful, so simple meals do
+            // not always pay the latency cost of a web lookup.
+            "tools": [["type": "web_search"]],
+            "tool_choice": "auto",
             "stream": false
         ]
 
-        var request = URLRequest(url: deepSeekEndpoint)
+        var request = URLRequest(url: deepSeekResponsesEndpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let bodyData = try JSONSerialization.data(withJSONObject: requestBody)
-        request.httpBody = bodyData
-        logger.logAPIRequest(endpoint: deepSeekEndpoint.absoluteString, body: String(data: bodyData, encoding: .utf8))
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        let metadata = imageBytes.map { ", imageBytes=\($0)" } ?? ""
+        logger.logAPIRequest(
+            endpoint: deepSeekResponsesEndpoint.absoluteString,
+            body: "model=\(model), webSearch=auto\(metadata)"
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
-
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AIServiceError.invalidResponse
         }
 
         let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
         logger.logAPIResponse(statusCode: httpResponse.statusCode, body: rawString)
-
         guard (200...299).contains(httpResponse.statusCode) else {
             throw AIServiceError.parsingError("DeepSeek API Error (\(httpResponse.statusCode)): \(rawString.prefix(300))")
         }
 
-        struct DeepSeekTextResponse: Decodable {
-            let choices: [Choice]?
-            let error: DeepSeekError?
-
-            struct Choice: Decodable {
-                let message: Message
-                struct Message: Decodable {
-                    let content: String
-                }
-            }
-
-            struct DeepSeekError: Decodable {
-                let message: String?
-                let code: String?
-            }
-        }
-
-        let deepSeekResponse: DeepSeekTextResponse
+        let deepSeekResponse: DeepSeekResponsesResponse
         do {
-            deepSeekResponse = try JSONDecoder().decode(DeepSeekTextResponse.self, from: data)
+            deepSeekResponse = try JSONDecoder().decode(DeepSeekResponsesResponse.self, from: data)
         } catch {
-            logger.logError(error, context: "DeepSeek text response decode")
+            logger.logError(error, context: "DeepSeek Responses decode")
             throw AIServiceError.parsingError("DeepSeek响应格式错误: \(rawString.prefix(300))")
         }
 
@@ -444,11 +395,43 @@ final class MiniMaxService: AIServiceProtocol {
             throw AIServiceError.parsingError("DeepSeek错误: \(error.message ?? error.code ?? "未知错误")")
         }
 
-        guard let content = deepSeekResponse.choices?.first?.message.content else {
+        guard deepSeekResponse.status == nil || deepSeekResponse.status == "completed",
+              let outputText = deepSeekResponse.outputText,
+              !outputText.isEmpty else {
             throw AIServiceError.parsingError("DeepSeek返回为空: \(rawString.prefix(300))")
         }
 
-        return try decodeNutritionList(from: content, context: "DeepSeek text")
+        return try decodeNutritionList(from: outputText, context: context)
+    }
+
+    private struct DeepSeekResponsesResponse: Decodable {
+        let status: String?
+        let output: [OutputItem]?
+        let error: ResponseError?
+
+        struct OutputItem: Decodable {
+            let content: [ContentPart]?
+        }
+
+        struct ContentPart: Decodable {
+            let type: String?
+            let text: String?
+        }
+
+        struct ResponseError: Decodable {
+            let message: String?
+            let code: String?
+        }
+
+        var outputText: String? {
+            let text = output?
+                .flatMap { $0.content ?? [] }
+                .compactMap { part in
+                    part.type == "output_text" ? part.text : nil
+                }
+                .joined(separator: "\n") ?? ""
+            return text.isEmpty ? nil : text
+        }
     }
 
     private func sendRequestMultiple(_ requestBody: MiniMaxRequest) async throws -> [NutritionInfo] {
