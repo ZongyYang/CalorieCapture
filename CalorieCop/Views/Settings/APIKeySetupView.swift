@@ -159,9 +159,13 @@ struct APIKeySetupView: View {
                         .pickerStyle(.segmented)
                     }
                     .padding()
-                    .background(Color(.systemBackground))
+                    .background(AppSurfaceStyle.cardBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
-                    .shadow(color: .black.opacity(0.05), radius: 5)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+                    }
+                    .shadow(color: .black.opacity(0.18), radius: 7, x: 0, y: 3)
 
                     let _ = refreshTrigger  // Force refresh
 
@@ -291,12 +295,15 @@ struct APIKeySetupView: View {
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
             }
+            .background(AppSurfaceStyle.pageBackground)
             .scrollDismissesKeyboard(.interactively)
             .onTapGesture {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             }
             .navigationTitle("API 设置")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbarBackground(AppSurfaceStyle.pageBackground, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("取消") {
@@ -343,7 +350,7 @@ struct APIKeySetupView: View {
                         .font(.headline)
                     Text(subtitle)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 }
 
                 Spacer()
@@ -405,8 +412,12 @@ struct APIKeySetupView: View {
                 }
             }
             .padding()
-            .background(Color(.systemGray6))
+            .background(AppSurfaceStyle.formInputBackground)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(AppSurfaceStyle.inputBorder, lineWidth: 1)
+            }
             .contextMenu {
                 Button {
                     if let clipboardString = UIPasteboard.general.string {
@@ -424,9 +435,13 @@ struct APIKeySetupView: View {
             }
         }
         .padding()
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(color: .black.opacity(0.05), radius: 5)
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 7, x: 0, y: 3)
     }
 
     private func saveKeys() {
