@@ -16,3 +16,10 @@ Documentation-only changes do not require an iPhone build. State clearly that no
 ## Working across Macs
 
 Before making changes, fetch and check the current branch, working tree, and upstream state. On a second Mac, update the repository with a fast-forward pull before opening a new Codex session. Do not overwrite, reset, or discard existing work without explicit user authorization.
+
+## Version management
+
+- Keep `MARKETING_VERSION` as the user-facing release version, and increment `CURRENT_PROJECT_VERSION` for every source change that is built, installed to the iPhone, committed, and pushed.
+- Keep the app and widget on the same build number so an installed app and its widget can be matched to one delivery.
+- The app Settings page displays both the App Store-style version (`1.0 (Build N)`) and `CalorieCopSourceCommit`.
+- For the final post-commit build, pass `CALORIECOP_SOURCE_COMMIT=$(git rev-parse --short HEAD)` to `xcodebuild`; use `development` only for local exploratory builds. This makes the installed iPhone build traceable to the exact GitHub commit.

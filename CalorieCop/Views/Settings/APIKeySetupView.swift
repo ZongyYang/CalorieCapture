@@ -1,6 +1,26 @@
 import SwiftUI
 import SwiftData
 
+private enum AppBuildInfo {
+    private static let infoDictionary = Bundle.main.infoDictionary ?? [:]
+
+    static var marketingVersion: String {
+        infoDictionary["CFBundleShortVersionString"] as? String ?? "未知"
+    }
+
+    static var buildNumber: String {
+        infoDictionary["CFBundleVersion"] as? String ?? "未知"
+    }
+
+    static var sourceCommit: String {
+        infoDictionary["CalorieCopSourceCommit"] as? String ?? "development"
+    }
+
+    static var displayVersion: String {
+        "(marketingVersion) (Build (buildNumber))"
+    }
+}
+
 struct AppSettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @StateObject private var healthKitService = HealthKitService()
@@ -77,6 +97,12 @@ struct AppSettingsView: View {
                                 .foregroundStyle(.pink)
                         }
                     }
+                }
+
+                Section("版本") {
+                    LabeledContent("应用版本", value: AppBuildInfo.displayVersion)
+                    LabeledContent("GitHub 提交", value: AppBuildInfo.sourceCommit)
+                        .font(.footnote.monospaced())
                 }
             }
             .navigationTitle("设置")
