@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import PhotosUI
+import AVFoundation
 
 private enum ManualEnergyInputMode: String, CaseIterable, Identifiable {
     case total
@@ -46,6 +47,7 @@ struct FoodInputView: View {
         self.autoStartRecognition = autoStartRecognition
         self.onSaved = onSaved
         _inputText = State(initialValue: initialSearchText)
+        _preferenceSearchText = State(initialValue: initialSearchText)
         _selectedImage = State(initialValue: initialImage)
     }
 
@@ -67,14 +69,17 @@ struct FoodInputView: View {
     @State private var selectedImage: UIImage?
     @State private var showingCamera = false
     @State private var showingCameraAlert = false
+    @State private var showingPhotoLibrary = false
 
     // Food preferences
     @State private var preferenceSearchText = ""
     @State private var showingDeleteConfirmation = false
     @State private var preferenceToDelete: FoodPreference?
     @State private var editingPreference: EditingPreference?
+    @State private var editingSuggestedEntry: FoodEntry?
     @State private var showingAllPreferences = true
     @State private var isPreferenceSearchFocused = false
+    @State private var pendingPreferenceDeletionIDs: Set<UUID> = []
     @State private var quickRecordMessage: String?
 
     // API Key setup
@@ -105,11 +110,11 @@ struct FoodInputView: View {
     }
 
     private var isTextAPIConfigured: Bool {
-        APIKeyManager.isDeepSeekConfigured || APIKeyManager.isMiniMaxConfigured || APIKeyManager.isQwenConfigured
+        APIKeyManager.isTextParsingModelConfigured(APIKeyManager.textParsingModel)
     }
 
     private var isImageAPIConfigured: Bool {
-        APIKeyManager.isQwenConfigured
+        APIKeyManager.isDeepSeekConfigured
     }
 
     private var isCameraAvailable: Bool {
@@ -160,34 +165,43 @@ struct FoodInputView: View {
                     // Use apiKeyCheckTrigger to force SwiftUI to re-evaluate
                     let _ = apiKeyCheckTrigger
 
-                    // Backfill mode banner
-                    if isBackfillMode {
-                        backfillBanner
-                    }
+                    if !isSavedPreferenceSearchMode {
+                        // Backfill mode banner
+                        if isBackfillMode {
+                            backfillBanner
+                        }
 
-                    if selectedImage != nil {
-                        imageInputSection
+                        if selectedImage != nil {
+                            imageInputSection
+                        }
                     }
 
                     savedPreferencesSection
 
-                    manualEntrySection
-
+                    // Search mode must also show recognition errors. Previously this
+                    // message was inside the manual-only branch and was hidden while
+                    // the search field contained text.
                     if let error = errorMessage {
                         errorView(error)
                     }
 
-                    manualActionButtons
+                    if !isSavedPreferenceSearchMode {
+                        manualEntrySection
+
+                        manualActionButtons
+                    }
                 }
                 .padding()
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
             }
+            .background(AppSurfaceStyle.pageBackground)
             .scrollDismissesKeyboard(.interactively)
+            .animation(.easeInOut(duration: 0.2), value: isSavedPreferenceSearchMode)
             .onTapGesture {
                 UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
             }
-            .navigationTitle(isBackfillMode ? "补录食物" : "记录摄入")
+            .navigationTitle(isBackfillMode ? "补录食物" : "记录")
             .toolbar {
                 if !isBackfillMode {
                     ToolbarItem(placement: .topBarLeading) {
@@ -198,7 +212,7 @@ struct FoodInputView: View {
                     AppSettingsToolbarButton(isPresented: $showingSettings)
                 }
             }
-            .sheet(isPresented: $showConfirmation) {
+            .sheet(isPresented: $showConfirmation, onDismiss: finishFoodConfirmationFlow) {
                 if let nutrition = parsedNutrition {
                     FoodConfirmationView(
                         rawInput: confirmationRawInput.isEmpty ? (inputText.isEmpty ? "图片识别" : inputText) : confirmationRawInput,
@@ -208,32 +222,49 @@ struct FoodInputView: View {
                         initialEnergyUnit: confirmationEnergyUnit
                     ) { editedNutrition, category, mealType in
                         let shouldResetManualEntry = confirmationIsManualAutofill
-                        saveFoodEntry(
+                        let entry = saveFoodEntry(
                             with: editedNutrition,
                             category: category,
                             mealType: mealType,
                             energyUnit: confirmationEnergyUnit,
                             nutritionEstimatedByAI: confirmationIsManualAutofill && editedNutrition.confidence != "manual",
-                            rawInputOverride: confirmationRawInput
+                            rawInputOverride: confirmationRawInput,
+                            finishFlow: false
                         )
                         if shouldResetManualEntry {
                             resetManualEntry()
                         }
+                        return entry
                     }
                 }
             }
-            .sheet(item: $editingPreference) { item in
+            .sheet(item: $editingPreference, onDismiss: {
+                preferenceSearchText = ""
+                isPreferenceSearchFocused = false
+            }) { item in
                 FoodPreferenceEditView(
                     preference: item.preference,
                     startsAIRecognition: item.startsAIRecognition,
                     onRecordIntake: { nutrition in
-                        recordPreferenceIntake(from: item.preference, nutrition: nutrition)
+                        recordPreferenceIntake(
+                            from: item.preference,
+                            nutrition: nutrition,
+                            finishFlow: false
+                        )
                     }
                 )
             }
-            .sheet(isPresented: $showingCamera) {
+            .sheet(item: $editingSuggestedEntry) { entry in
+                FoodEntryEditView(entry: entry)
+            }
+            .fullScreenCover(isPresented: $showingCamera) {
                 CameraView(image: $selectedImage)
             }
+            .photosPicker(
+                isPresented: $showingPhotoLibrary,
+                selection: $selectedPhoto,
+                matching: .images
+            )
             .sheet(isPresented: $showMultipleConfirmation) {
                 MultipleFoodConfirmationView(
                     nutritionList: parsedNutritionList,
@@ -295,6 +326,25 @@ struct FoodInputView: View {
                     await parseFood()
                 }
             }
+            .onReceive(NotificationCenter.default.publisher(for: .focusFoodRecordSearch)) { _ in
+                isPreferenceSearchFocused = true
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openFoodRecordCamera)) { _ in
+                isPreferenceSearchFocused = false
+                openCameraFromSearch()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .openFoodRecordPhotoLibrary)) { _ in
+                isPreferenceSearchFocused = false
+                showingPhotoLibrary = true
+            }
+        }
+        .onChange(of: isSavedPreferenceSearchMode) { wasSearching, isSearching in
+            if wasSearching && !isSearching {
+                commitPendingPreferenceDeletions()
+            }
+        }
+        .onDisappear {
+            commitPendingPreferenceDeletions()
         }
     }
 
@@ -325,7 +375,7 @@ struct FoodInputView: View {
                 .font(.title2)
                 .fontWeight(.bold)
 
-            Text("请至少设置 DeepSeek 或 MiniMax API 密钥以启用文字解析。Qwen 用于图片识别，也可作为文字解析备用。")
+            Text("DeepSeek 用于文字、图片食物识别和按需联网检索；Highspeed 文字模式需要 MiniMax。")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -334,7 +384,7 @@ struct FoodInputView: View {
             VStack(alignment: .leading, spacing: 12) {
                     apiStatusRow(
                         name: "DeepSeek API",
-                        purpose: "文字解析和 AI 顾问",
+                        purpose: "文字、图片识别和按需联网检索",
                         isConfigured: APIKeyManager.isDeepSeekConfigured
                     )
                     apiStatusRow(
@@ -344,13 +394,17 @@ struct FoodInputView: View {
                     )
                     apiStatusRow(
                         name: "Qwen API",
-                        purpose: "图片识别和文字解析备用",
+                        purpose: "AI 顾问图片分析（可选）",
                         isConfigured: APIKeyManager.isQwenConfigured
                     )
             }
             .padding()
-            .background(Color(.systemGray6))
+            .background(AppSurfaceStyle.cardBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(AppSurfaceStyle.inputBorder, lineWidth: 1)
+            }
 
             Button {
                 showingSettings = true
@@ -403,14 +457,14 @@ struct FoodInputView: View {
 
     private var imageInputSection: some View {
         VStack(spacing: 12) {
-            // Warning if Qwen API not configured
+            // Warning if DeepSeek API not configured
             // Use apiKeyCheckTrigger to force refresh
             let _ = apiKeyCheckTrigger
             if !isImageAPIConfigured {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                    Text("图片识别需要设置 Qwen API")
+                    Text("图片识别需要设置 DeepSeek API")
                         .font(.caption)
                     Spacer()
                     Button("设置") {
@@ -450,7 +504,7 @@ struct FoodInputView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .frame(height: 220)
-                .background(Color(.systemGray6))
+                .background(AppSurfaceStyle.formInputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay {
                     RoundedRectangle(cornerRadius: 12)
@@ -474,7 +528,7 @@ struct FoodInputView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
-                        .background(Color(.systemGray6))
+                        .background(AppSurfaceStyle.formInputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
 
@@ -488,13 +542,17 @@ struct FoodInputView: View {
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
-                        .background(Color(.systemGray6))
+                        .background(AppSurfaceStyle.formInputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
                 }
                 .foregroundStyle(.primary)
             }
         }
+        .padding(14)
+        .background(AppSurfaceStyle.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 
     private func dividerWithText(_ text: String) -> some View {
@@ -519,7 +577,7 @@ struct FoodInputView: View {
         return TextField(placeholder, text: $inputText, axis: .vertical)
             .textFieldStyle(.plain)
             .padding()
-            .background(Color(.systemGray6))
+            .background(AppSurfaceStyle.formInputBackground)
             .clipShape(RoundedRectangle(cornerRadius: 12))
             .lineLimit(3...6)
     }
@@ -568,13 +626,14 @@ struct FoodInputView: View {
                     TextField("食物名称，例如：鸡胸肉", text: $manualFoodName)
                         .textFieldStyle(.plain)
                         .padding(12)
-                        .background(Color(.systemBackground))
+                        .background(AppSurfaceStyle.formInputBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         .submitLabel(.next)
 
                     BrandAutocompleteField(
                         text: $manualBrand,
-                        brands: knownBrands
+                        brands: knownBrands,
+                        inputBackground: AppSurfaceStyle.formInputBackground
                     )
                 }
             }
@@ -720,15 +779,20 @@ struct FoodInputView: View {
             content()
         }
         .padding(14)
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
     }
 
     private func manualPickerLabel(_ title: String) -> some View {
         Text(title)
             .font(.caption)
             .fontWeight(.medium)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(AppSurfaceStyle.formSecondaryText)
     }
 
     private func manualNumberField(
@@ -750,11 +814,11 @@ struct FoodInputView: View {
                 .frame(width: 90)
 
             Text(unit)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 .frame(width: 82, alignment: .leading)
         }
         .padding(12)
-        .background(Color(.systemBackground))
+        .background(AppSurfaceStyle.formInputBackground)
         .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
@@ -799,21 +863,6 @@ struct FoodInputView: View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
                 Button {
-                    handleManualPreferenceAction()
-                } label: {
-                    Label("保存习惯", systemImage: "heart.fill")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.white)
-                .background(canSaveManualPreference && !isLoading ? Color.pink : Color.gray)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-                .disabled(!canSaveManualPreference || isLoading)
-
-                Button {
                     handleManualRecordAction()
                 } label: {
                     Label("记录摄入", systemImage: "plus.circle.fill")
@@ -827,6 +876,21 @@ struct FoodInputView: View {
                 .background(canSaveManualEntry && !isLoading ? Color.green : Color.gray)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .disabled(!canSaveManualEntry || isLoading)
+
+                Button {
+                    handleManualPreferenceAction()
+                } label: {
+                    Label("保存习惯", systemImage: "heart.fill")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.white)
+                .background(canSaveManualPreference && !isLoading ? Color.pink : Color.gray)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .disabled(!canSaveManualPreference || isLoading)
             }
 
             if let manualPreferenceMessage {
@@ -910,6 +974,11 @@ struct FoodInputView: View {
         !preferenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || selectedImage != nil
     }
 
+    private var isSavedPreferenceSearchMode: Bool {
+        isPreferenceSearchFocused
+            || !preferenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     private var displayedSearchPreferences: [FoodPreference] {
         if preferenceSearchText.isEmpty {
             return showingAllPreferences ? foodPreferences : []
@@ -917,80 +986,137 @@ struct FoodInputView: View {
         return filteredPreferences
     }
 
+    private var savedPreferenceSuggestions: [FoodPreference] {
+        let query = preferenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return [] }
+        return Array(filteredPreferences.prefix(3))
+    }
+
+    private var unsavedEntrySuggestions: [FoodEntry] {
+        allEntries.unsavedSearchSuggestions(
+            matching: preferenceSearchText,
+            on: effectiveDate,
+            excluding: foodPreferences
+        )
+    }
+
     private var savedPreferencesSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                ImagePasteTextField(
-                    text: $preferenceSearchText,
-                    placeholder: "搜索习惯或输入食物",
-                    isEnabled: !isLoading,
-                    returnKeyType: .search,
-                    focusBinding: $isPreferenceSearchFocused,
-                    onSubmit: { recognizeFromSearch() },
-                    onPasteImage: { image in
-                        inputText = preferenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-                        selectedPhoto = nil
-                        selectedImage = image
-                        errorMessage = nil
-                    },
-                    onPasteFailure: {
-                        errorMessage = "剪贴板中没有可用图片，请重新拷贝照片后重试。"
+                HStack(spacing: 8) {
+                    ImagePasteTextField(
+                        text: $preferenceSearchText,
+                        placeholder: "搜索习惯或输入食物",
+                        isEnabled: !isLoading,
+                        returnKeyType: .search,
+                        focusBinding: $isPreferenceSearchFocused,
+                        onSubmit: { recognizeFromSearch() },
+                        onPasteImage: { image in
+                            inputText = preferenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+                            selectedPhoto = nil
+                            selectedImage = image
+                            errorMessage = nil
+                        },
+                        onPasteFailure: {
+                            errorMessage = "剪贴板中没有可用图片，请重新拷贝照片后重试。"
+                        }
+                    )
+                    if !preferenceSearchText.isEmpty {
+                        Button {
+                            preferenceSearchText = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
                     }
-                )
-                if !preferenceSearchText.isEmpty {
-                    Button {
-                        preferenceSearchText = ""
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                }
 
-                Divider()
-                    .frame(height: 22)
+                    Divider()
+                        .frame(height: 22)
 
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 30, height: 30)
-                        .accessibilityLabel("正在识别")
-                } else {
+                    TextRecognitionActionButton(
+                        isProcessing: isLoading,
+                        isEnabled: canRecognizeFromSearch,
+                        action: recognizeFromSearch
+                    )
+
                     Button {
-                        recognizeFromSearch()
+                        openCameraFromSearch()
                     } label: {
-                        Image(systemName: "sparkles")
+                        Image(systemName: "camera.fill")
                             .frame(width: 30, height: 30)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.primary)
-                    .accessibilityLabel("AI识别")
-                }
+                    .accessibilityLabel("拍照识别")
 
-                Button {
-                    openCameraFromSearch()
-                } label: {
-                    Image(systemName: "camera.fill")
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
+                    PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                        Image(systemName: "photo.fill")
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.primary)
+                    .accessibilityLabel("从相册选择照片")
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.primary)
-                .accessibilityLabel("拍照识别")
+                .frame(maxWidth: .infinity)
+                .foodSearchBarSurface()
 
-                PhotosPicker(selection: $selectedPhoto, matching: .images) {
-                    Image(systemName: "photo.fill")
-                        .frame(width: 30, height: 30)
-                        .contentShape(Rectangle())
+                if isSavedPreferenceSearchMode {
+                    Button("取消") {
+                        commitPendingPreferenceDeletions()
+                        preferenceSearchText = ""
+                        isPreferenceSearchFocused = false
+                    }
+                    .font(.subheadline)
+                    .foregroundStyle(.tint)
+                    .buttonStyle(.plain)
+                    .transition(.opacity)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.primary)
-                .accessibilityLabel("从相册选择照片")
-
             }
-            .foodSearchBarSurface()
+
+            if !savedPreferenceSuggestions.isEmpty {
+                SavedPreferenceSuggestionPanel(
+                    preferences: savedPreferenceSuggestions,
+                    pendingDeletionIDs: pendingPreferenceDeletionIDs,
+                    onSelect: { preference in
+                        editingPreference = EditingPreference(preference)
+                    },
+                    onToggleSaved: { preference in
+                        togglePendingPreferenceDeletion(preference)
+                    },
+                    onRecord: { preference in
+                        quickRecordPreference(preference)
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
+
+            if !unsavedEntrySuggestions.isEmpty {
+                TodayEntrySuggestionPanel(
+                    entries: unsavedEntrySuggestions,
+                    onSelect: { entry in
+                        editingSuggestedEntry = entry
+                    },
+                    onSavePreference: { entry in
+                        saveSuggestedEntryAsPreference(entry)
+                    },
+                    onRecord: { entry in
+                        quickRecordSuggestedEntry(entry)
+                    }
+                )
+                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
         }
+        .animation(
+            .easeInOut(duration: 0.2),
+            value: savedPreferenceSuggestions.map { $0.id }
+        )
+        .animation(
+            .easeInOut(duration: 0.2),
+            value: unsavedEntrySuggestions.map { $0.id }
+        )
     }
 
     private func isPreferenceRecordedForEffectiveDate(_ preference: FoodPreference) -> Bool {
@@ -998,6 +1124,32 @@ struct FoodInputView: View {
             Calendar.current.isDate(entry.createdAt, inSameDayAs: effectiveDate)
                 && entry.rawInput.hasPrefix("已保存习惯:")
                 && preference.matches(keyword: entry.foodName, brand: entry.brand)
+        }
+    }
+
+    private func togglePendingPreferenceDeletion(_ preference: FoodPreference) {
+        withAnimation(.easeInOut(duration: 0.18)) {
+            if pendingPreferenceDeletionIDs.contains(preference.id) {
+                pendingPreferenceDeletionIDs.remove(preference.id)
+            } else {
+                pendingPreferenceDeletionIDs.insert(preference.id)
+            }
+        }
+    }
+
+    private func commitPendingPreferenceDeletions() {
+        guard !pendingPreferenceDeletionIDs.isEmpty else { return }
+
+        let pendingIDs = pendingPreferenceDeletionIDs
+        for preference in foodPreferences where pendingIDs.contains(preference.id) {
+            modelContext.delete(preference)
+        }
+
+        do {
+            try modelContext.save()
+            pendingPreferenceDeletionIDs.removeAll()
+        } catch {
+            errorMessage = "删除食物习惯失败：\(error.localizedDescription)"
         }
     }
 
@@ -1032,6 +1184,7 @@ struct FoodInputView: View {
         }
 
         let trimmedInput = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isDirectNutritionSummary = NutritionSummaryParser.canParse(trimmedInput)
         guard selectedImage != nil || !trimmedInput.isEmpty else {
             errorMessage = "请输入食物描述，或选择一张食物照片。"
             return
@@ -1039,13 +1192,14 @@ struct FoodInputView: View {
 
         // Check API keys before parsing
         if selectedImage != nil && !isImageAPIConfigured {
-            errorMessage = "图片识别需要设置 Qwen API 密钥。请在设置中配置。"
+            errorMessage = "图片识别需要设置 DeepSeek API 密钥。请在设置中配置。"
             showingSettings = true
             return
         }
 
-        if selectedImage == nil && !isTextAPIConfigured {
-            errorMessage = "文字解析需要设置 DeepSeek 或 MiniMax API 密钥，或设置 Qwen API 密钥作为备用。"
+        if selectedImage == nil && !isDirectNutritionSummary && !isTextAPIConfigured {
+            let model = APIKeyManager.textParsingModel
+            errorMessage = "当前选择 \(model.displayName)，请先配置 \(model.providerName) API 密钥。"
             showingSettings = true
             return
         }
@@ -1057,7 +1211,7 @@ struct FoodInputView: View {
             let nutritionList: [NutritionInfo]
 
             if let image = selectedImage {
-                // Image parsing now supports multiple items via Qwen VL Plus
+                // Image parsing uses DeepSeek Vision and supports multiple items.
                 nutritionList = try await aiService.parseFoodImageMultiple(
                     image,
                     additionalContext: trimmedInput.isEmpty ? nil : trimmedInput,
@@ -1096,7 +1250,7 @@ struct FoodInputView: View {
     private func clearSelectedImage() {
         selectedImage = nil
         selectedPhoto = nil
-        if errorMessage == "图片识别需要设置 Qwen API 密钥。请在设置中配置。" {
+        if errorMessage == "图片识别需要设置 DeepSeek API 密钥。请在设置中配置。" {
             errorMessage = nil
         }
     }
@@ -1387,14 +1541,16 @@ struct FoodInputView: View {
         manualPreferenceMessage = nil
     }
 
+    @discardableResult
     private func saveFoodEntry(
         with nutrition: NutritionInfo,
         category: FoodEntryCategory = .meal,
         mealType: FoodMealType? = nil,
         energyUnit: EnergyUnit = .kilocalorie,
         nutritionEstimatedByAI: Bool = false,
-        rawInputOverride: String? = nil
-    ) {
+        rawInputOverride: String? = nil,
+        finishFlow: Bool = true
+    ) -> FoodEntry {
         let trimmedRawInputOverride = rawInputOverride?.trimmingCharacters(in: .whitespacesAndNewlines)
         let rawInput: String
         if let trimmedRawInputOverride, !trimmedRawInputOverride.isEmpty {
@@ -1426,26 +1582,44 @@ struct FoodInputView: View {
         // Explicitly save to ensure Dashboard updates immediately
         try? modelContext.save()
 
-        // Reset state
+        if finishFlow {
+            // Reset state
+            inputText = ""
+            selectedImage = nil
+            selectedPhoto = nil
+            parsedNutrition = nil
+            showConfirmation = false
+            confirmationRawInput = ""
+            confirmationInitialCategory = .meal
+            confirmationInitialMealType = nil
+            confirmationEnergyUnit = .kilocalorie
+            confirmationIsManualAutofill = false
+
+            // Dismiss keyboard
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+
+            // Call completion handler and dismiss if in backfill mode
+            onSaved?()
+            if isBackfillMode {
+                dismiss()
+            }
+        }
+
+        return entry
+    }
+
+    private func finishFoodConfirmationFlow() {
+        preferenceSearchText = ""
         inputText = ""
         selectedImage = nil
         selectedPhoto = nil
         parsedNutrition = nil
-        showConfirmation = false
         confirmationRawInput = ""
         confirmationInitialCategory = .meal
         confirmationInitialMealType = nil
         confirmationEnergyUnit = .kilocalorie
         confirmationIsManualAutofill = false
-
-        // Dismiss keyboard
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-
-        // Call completion handler and dismiss if in backfill mode
-        onSaved?()
-        if isBackfillMode {
-            dismiss()
-        }
+        isPreferenceSearchFocused = false
     }
 
     private func saveMultipleFoodEntries(_ nutritionList: [NutritionInfo]) {
@@ -1485,7 +1659,12 @@ struct FoodInputView: View {
         }
     }
 
-    private func recordPreferenceIntake(from preference: FoodPreference, nutrition: NutritionInfo) {
+    @discardableResult
+    private func recordPreferenceIntake(
+        from preference: FoodPreference,
+        nutrition: NutritionInfo,
+        finishFlow: Bool = true
+    ) -> FoodEntry {
         let entryDate = effectiveDate
         let entry = FoodEntry(
             rawInput: "已保存习惯: \(preference.keyword)",
@@ -1506,10 +1685,15 @@ struct FoodInputView: View {
         modelContext.insert(entry)
         try? modelContext.save()
 
-        onSaved?()
-        if isBackfillMode {
-            dismiss()
+        if finishFlow {
+            preferenceSearchText = ""
+            isPreferenceSearchFocused = false
+            onSaved?()
+            if isBackfillMode {
+                dismiss()
+            }
         }
+        return entry
     }
 
     private func quickRecordPreference(_ preference: FoodPreference) {
@@ -1519,8 +1703,57 @@ struct FoodInputView: View {
         }
 
         recordPreferenceIntake(from: preference, nutrition: nutrition)
+        showQuickRecordMessage("已记录 \(preference.keyword)")
+    }
 
-        let message = "已记录 \(preference.keyword)"
+    private func saveSuggestedEntryAsPreference(_ entry: FoodEntry) {
+        guard !foodPreferences.contains(where: {
+            $0.matches(keyword: entry.foodName, brand: entry.brand)
+        }) else { return }
+
+        modelContext.insert(FoodPreference(entry: entry))
+        do {
+            try modelContext.save()
+            showQuickRecordMessage("已保存习惯 \(entry.foodName)")
+        } catch {
+            errorMessage = "保存食物习惯失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func quickRecordSuggestedEntry(_ source: FoodEntry) {
+        let entryDate = effectiveDate
+        let entry = FoodEntry(
+            rawInput: "从今日记录再次摄入: \(source.foodName)",
+            foodName: source.foodName,
+            brand: source.brand,
+            grams: source.grams,
+            calories: source.calories,
+            protein: source.protein,
+            carbohydrates: source.carbohydrates,
+            fat: source.fat,
+            date: entryDate,
+            category: source.category,
+            mealType: source.category == .meal ? FoodMealType.defaultType(for: entryDate) : nil,
+            energyUnit: source.energyUnit,
+            nutritionEstimatedByAI: source.nutritionEstimatedByAI == true
+        )
+        modelContext.insert(entry)
+
+        do {
+            try modelContext.save()
+            preferenceSearchText = ""
+            isPreferenceSearchFocused = false
+            showQuickRecordMessage("已记录 \(source.foodName)")
+            onSaved?()
+            if isBackfillMode {
+                dismiss()
+            }
+        } catch {
+            errorMessage = "记录摄入失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func showQuickRecordMessage(_ message: String) {
         withAnimation(.easeInOut(duration: 0.18)) {
             quickRecordMessage = message
         }
@@ -1584,6 +1817,174 @@ struct FoodInputView: View {
     }
 }
 
+struct SavedPreferenceSuggestionPanel: View {
+    let preferences: [FoodPreference]
+    let pendingDeletionIDs: Set<UUID>
+    let onSelect: (FoodPreference) -> Void
+    let onToggleSaved: (FoodPreference) -> Void
+    let onRecord: (FoodPreference) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("已保存习惯")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+
+            ForEach(Array(preferences.enumerated()), id: \.element.id) { index, preference in
+                HStack(spacing: 12) {
+                    Button {
+                        onSelect(preference)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(preference.keyword)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+
+                            HStack(spacing: 6) {
+                                if let brand = preference.brand, !brand.isEmpty {
+                                    Text(brand)
+                                }
+                                if !preference.defaultDescription.isEmpty {
+                                    Text(preference.defaultDescription)
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onToggleSaved(preference)
+                    } label: {
+                        Image(
+                            systemName: pendingDeletionIDs.contains(preference.id)
+                                ? "heart"
+                                : "heart.fill"
+                        )
+                        .font(.title3)
+                        .foregroundStyle(
+                            pendingDeletionIDs.contains(preference.id) ? Color.gray : Color.pink
+                        )
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        pendingDeletionIDs.contains(preference.id)
+                            ? "恢复保存 \(preference.keyword)"
+                            : "删除习惯 \(preference.keyword)"
+                    )
+
+                    Button {
+                        onRecord(preference)
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.blue)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("记录 \(preference.keyword)")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+
+                if index < preferences.count - 1 {
+                    Divider()
+                        .padding(.leading, 12)
+                }
+            }
+        }
+    }
+}
+
+struct TodayEntrySuggestionPanel: View {
+    let entries: [FoodEntry]
+    let onSelect: (FoodEntry) -> Void
+    let onSavePreference: (FoodEntry) -> Void
+    let onRecord: (FoodEntry) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("当日未保存")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 4)
+
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                HStack(spacing: 12) {
+                    Button {
+                        onSelect(entry)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(entry.foodName)
+                                .font(.body)
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+
+                            HStack(spacing: 6) {
+                                if let brand = entry.brand, !brand.isEmpty {
+                                    Text(brand)
+                                }
+                                Text("\(entry.grams.formattedGrams)\(entry.category.quantityUnitSymbol)")
+                                Text("\(entry.displayedEnergy.formattedCalories) \(entry.energyUnit.symbol)")
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onSavePreference(entry)
+                    } label: {
+                        Image(systemName: "heart")
+                            .font(.title3)
+                            .foregroundStyle(.gray)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("保存习惯 \(entry.foodName)")
+
+                    Button {
+                        onRecord(entry)
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.title3)
+                            .foregroundStyle(.blue)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("再次记录 \(entry.foodName)")
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+
+                if index < entries.count - 1 {
+                    Divider()
+                        .padding(.leading, 12)
+                }
+            }
+        }
+    }
+}
+
 struct FoodPreferencesSettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \FoodPreference.usageCount, order: .reverse) private var foodPreferences: [FoodPreference]
@@ -1594,6 +1995,7 @@ struct FoodPreferencesSettingsView: View {
     @State private var preferenceToDelete: FoodPreference?
     @State private var showingDeleteConfirmation = false
     @State private var quickRecordMessage: String?
+    @State private var sessionRecordedPreferenceIDs: Set<UUID> = []
 
     private var filteredPreferences: [FoodPreference] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1643,7 +2045,7 @@ struct FoodPreferencesSettingsView: View {
                         ForEach(filteredPreferences, id: \.id) { preference in
                             PreferenceRowWithActions(
                                 preference: preference,
-                                isRecordedForDate: isRecordedToday(preference),
+                                isRecordedForDate: sessionRecordedPreferenceIDs.contains(preference.id),
                                 onTap: {
                                     editingPreference = EditingPreference(preference)
                                 },
@@ -1683,6 +2085,15 @@ struct FoodPreferencesSettingsView: View {
                 startsAIRecognition: item.startsAIRecognition,
                 onRecordIntake: { nutrition in
                     recordPreferenceIntake(from: item.preference, nutrition: nutrition)
+                },
+                onIntakeStateChange: { isRecorded in
+                    withAnimation(.easeInOut(duration: 0.18)) {
+                        if isRecorded {
+                            _ = sessionRecordedPreferenceIDs.insert(item.preference.id)
+                        } else {
+                            sessionRecordedPreferenceIDs.remove(item.preference.id)
+                        }
+                    }
                 }
             )
         }
@@ -1697,17 +2108,13 @@ struct FoodPreferencesSettingsView: View {
         } message: {
             Text("确定要删除这个食物习惯吗？")
         }
-    }
-
-    private func isRecordedToday(_ preference: FoodPreference) -> Bool {
-        allEntries.contains { entry in
-            Calendar.current.isDate(entry.createdAt, inSameDayAs: Date())
-                && entry.rawInput.hasPrefix("已保存习惯:")
-                && preference.matches(keyword: entry.foodName, brand: entry.brand)
+        .onDisappear {
+            sessionRecordedPreferenceIDs.removeAll()
         }
     }
 
-    private func recordPreferenceIntake(from preference: FoodPreference, nutrition: NutritionInfo) {
+    @discardableResult
+    private func recordPreferenceIntake(from preference: FoodPreference, nutrition: NutritionInfo) -> FoodEntry {
         let entry = FoodEntry(
             rawInput: "已保存习惯: \(preference.keyword)",
             foodName: nutrition.foodName,
@@ -1726,6 +2133,7 @@ struct FoodPreferencesSettingsView: View {
         preference.usageCount += 1
         modelContext.insert(entry)
         try? modelContext.save()
+        return entry
     }
 
     private func quickRecordPreference(_ preference: FoodPreference) {
@@ -1737,6 +2145,7 @@ struct FoodPreferencesSettingsView: View {
         recordPreferenceIntake(from: preference, nutrition: nutrition)
         let message = "已记录 \(preference.keyword)"
         withAnimation(.easeInOut(duration: 0.18)) {
+            sessionRecordedPreferenceIDs.insert(preference.id)
             quickRecordMessage = message
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
@@ -1831,7 +2240,8 @@ struct FoodPreferenceEditView: View {
 
     let preference: FoodPreference
     let startsAIRecognition: Bool
-    let onRecordIntake: (NutritionInfo) -> Void
+    let onRecordIntake: (NutritionInfo) -> FoodEntry
+    let onIntakeStateChange: (Bool) -> Void
 
     @State private var foodName: String
     @State private var brand: String
@@ -1858,6 +2268,7 @@ struct FoodPreferenceEditView: View {
     @State private var hasStartedInitialRecognition = false
     @State private var showingDeleteConfirmation = false
     @State private var aiInputText = ""
+    @State private var isPreferenceSaved = true
     @FocusState private var focusedField: PreferenceEditField?
 
     private let aiService = MiniMaxService()
@@ -1872,14 +2283,16 @@ struct FoodPreferenceEditView: View {
     init(
         preference: FoodPreference,
         startsAIRecognition: Bool = false,
-        onRecordIntake: @escaping (NutritionInfo) -> Void
+        onRecordIntake: @escaping (NutritionInfo) -> FoodEntry,
+        onIntakeStateChange: @escaping (Bool) -> Void = { _ in }
     ) {
         self.preference = preference
         self.startsAIRecognition = startsAIRecognition
         self.onRecordIntake = onRecordIntake
+        self.onIntakeStateChange = onIntakeStateChange
         _foodName = State(initialValue: preference.keyword)
         _brand = State(initialValue: preference.brand ?? "")
-        _intakeQuantity = State(initialValue: "")
+        _intakeQuantity = State(initialValue: Self.initialIntakeQuantity(for: preference))
         _totalQuantity = State(initialValue: Self.formatted(preference.defaultGrams))
         _totalCalories = State(
             initialValue: Self.formatted(
@@ -1959,7 +2372,7 @@ struct FoodPreferenceEditView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 20) {
                     AIRecognitionActionBar(
                         isProcessing: isProcessingAI,
                         onRecognize: { recognizeWithAI(image: selectedImage) },
@@ -2118,24 +2531,37 @@ struct FoodPreferenceEditView: View {
                                 .padding(.vertical, 13)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(canRecordIntake ? Color.white : Color.secondary)
-                        .background(canRecordIntake ? Color.blue : Color(.systemGray5))
+                        .foregroundStyle(Color.secondary)
+                        .background(Color(.systemGray5))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                         .disabled(!canRecordIntake)
 
-                        Button(role: .destructive) {
-                            showingDeleteConfirmation = true
+                        Button {
+                            if isPreferenceSaved {
+                                showingDeleteConfirmation = true
+                            } else {
+                                withAnimation(.easeInOut(duration: 0.18)) {
+                                    isPreferenceSaved = true
+                                }
+                            }
                         } label: {
-                            Label("删除习惯", systemImage: "trash")
+                            Label(
+                                isPreferenceSaved ? "删除习惯" : "添加习惯",
+                                systemImage: isPreferenceSaved ? "heart.fill" : "heart"
+                            )
                                 .font(.subheadline)
                                 .fontWeight(.semibold)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 13)
                         }
                         .buttonStyle(.plain)
-                        .foregroundStyle(.red)
-                        .background(Color.red.opacity(0.12))
+                        .foregroundStyle(isPreferenceSaved ? .white : .pink)
+                        .background(isPreferenceSaved ? Color.pink : AppSurfaceStyle.cardBackground)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.pink.opacity(isPreferenceSaved ? 0 : 0.35), lineWidth: 1)
+                        }
                     }
                     .padding(.top, 4)
                     .padding(.bottom, 12)
@@ -2149,7 +2575,7 @@ struct FoodPreferenceEditView: View {
             .sheet(isPresented: $showingSettings) {
                 AppSettingsView()
             }
-            .sheet(isPresented: $showingCamera, onDismiss: recognizeCapturedImage) {
+            .fullScreenCover(isPresented: $showingCamera, onDismiss: recognizeCapturedImage) {
                 CameraView(image: $selectedImage)
             }
             .alert("相机不可用", isPresented: $showingCameraAlert) {
@@ -2191,6 +2617,9 @@ struct FoodPreferenceEditView: View {
                 DispatchQueue.main.async {
                     recognizeWithAI()
                 }
+            }
+            .onDisappear {
+                commitPreferenceSavedState()
             }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -2235,21 +2664,20 @@ struct FoodPreferenceEditView: View {
             content()
         }
         .padding(14)
-        .background(AppSurfaceStyle.moduleBackground)
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
     }
 
     private func preferenceEditLabel(_ title: String) -> some View {
         Text(title)
             .font(.caption)
             .fontWeight(.medium)
-            .foregroundStyle(.secondary)
+            .foregroundStyle(AppSurfaceStyle.formSecondaryText)
     }
 
     private var preferenceEditInputBackground: Color {
-        Color(UIColor { traitCollection in
-            traitCollection.userInterfaceStyle == .dark ? .black : .systemBackground
-        })
+        AppSurfaceStyle.formInputBackground
     }
 
     @ViewBuilder
@@ -2268,7 +2696,7 @@ struct FoodPreferenceEditView: View {
                 .focused($focusedField, equals: field)
                 .frame(width: 90)
             Text(unit)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 .frame(width: 92, alignment: .leading)
         }
         .padding(12)
@@ -2285,8 +2713,8 @@ struct FoodPreferenceEditView: View {
             return
         }
 
-        if image != nil, !APIKeyManager.isQwenConfigured {
-            errorMessage = "图片识别需要设置 Qwen API 密钥。"
+        if image != nil, !APIKeyManager.isDeepSeekConfigured {
+            errorMessage = "图片识别需要设置 DeepSeek API 密钥。"
             aiStatusMessage = nil
             showingSettings = true
             return
@@ -2449,16 +2877,23 @@ struct FoodPreferenceEditView: View {
     private func recordIntake() {
         focusedField = nil
         guard let nutrition = savePreferenceChanges(requireIntakeAmount: true) else { return }
-        onRecordIntake(nutrition)
+        _ = onRecordIntake(nutrition)
+        onIntakeStateChange(true)
         dismiss()
     }
 
     private func deletePreference() {
         focusedField = nil
+        withAnimation(.easeInOut(duration: 0.18)) {
+            isPreferenceSaved = false
+        }
+    }
+
+    private func commitPreferenceSavedState() {
+        guard !isPreferenceSaved else { return }
         modelContext.delete(preference)
         do {
             try modelContext.save()
-            dismiss()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -2632,6 +3067,17 @@ struct FoodPreferenceEditView: View {
     private static func formatted(_ value: Double?, decimals: Int = 1) -> String {
         guard let value else { return "" }
         return String(format: "%.\(decimals)f", value)
+    }
+
+    private static func initialIntakeQuantity(for preference: FoodPreference) -> String {
+        if let defaultGrams = preference.defaultGrams, defaultGrams > 0 {
+            return formatted(defaultGrams)
+        }
+
+        // Older habits may have unit nutrition data but no saved serving size.
+        // Start from one standard 100 g / 100 ml reference so the action is
+        // immediately available while keeping the quantity editable.
+        return preference.resolvedCaloriesPer100 != nil ? "100" : ""
     }
 
     private static func trimmedNumber(_ value: Double) -> String {
@@ -3194,39 +3640,389 @@ struct SingleFoodEditView: View {
 
 // MARK: - Camera View
 
-struct CameraView: UIViewControllerRepresentable {
+struct CameraView: View {
     @Binding var image: UIImage?
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var camera = CameraController()
 
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
+    var body: some View {
+        ZStack {
+            Color.black
+                .ignoresSafeArea()
 
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+            CameraPreview(session: camera.session)
+                .ignoresSafeArea()
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-
-    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let parent: CameraView
-
-        init(_ parent: CameraView) {
-            self.parent = parent
-        }
-
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let image = info[.originalImage] as? UIImage {
-                parent.image = image
+            if let errorMessage = camera.errorMessage {
+                VStack(spacing: 16) {
+                    Image(systemName: "camera.fill")
+                        .font(.largeTitle)
+                    Text(errorMessage)
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                }
+                .foregroundStyle(.white)
+                .padding(28)
+                .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 20))
+                .padding(.horizontal, 32)
             }
-            parent.dismiss()
+
+            VStack(spacing: 18) {
+                Spacer()
+
+                Button {
+                    camera.cycleFlashMode()
+                } label: {
+                    Label(flashTitle, systemImage: flashIcon)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(camera.isFlashAvailable ? Color.yellow : Color.secondary)
+                        .padding(.horizontal, 16)
+                        .frame(height: 42)
+                        .background(.black.opacity(0.64), in: Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(.white.opacity(0.18), lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .disabled(!camera.isFlashAvailable)
+                .accessibilityLabel("闪光灯\(flashTitle)")
+
+                HStack {
+                    cameraControlButton(
+                        systemName: "xmark",
+                        accessibilityLabel: "关闭相机"
+                    ) {
+                        dismiss()
+                    }
+
+                    Spacer()
+
+                    Button {
+                        camera.capturePhoto()
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(.white)
+                                .frame(width: 72, height: 72)
+                            Circle()
+                                .stroke(.white.opacity(0.55), lineWidth: 5)
+                                .frame(width: 86, height: 86)
+                        }
+                        .opacity(camera.isCapturing ? 0.55 : 1)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(camera.isCapturing || camera.errorMessage != nil)
+                    .accessibilityLabel("拍照")
+
+                    Spacer()
+
+                    cameraControlButton(
+                        systemName: "arrow.triangle.2.circlepath.camera.fill",
+                        accessibilityLabel: "切换前后镜头"
+                    ) {
+                        camera.switchCamera()
+                    }
+                }
+                .padding(.horizontal, 34)
+            }
+            .padding(.bottom, 20)
+            .background(alignment: .bottom) {
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.86)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 250)
+                .ignoresSafeArea(edges: .bottom)
+            }
+        }
+        .onAppear {
+            camera.start()
+        }
+        .onDisappear {
+            camera.stop()
+        }
+        .onReceive(camera.$capturedImage) { capturedImage in
+            guard let capturedImage else { return }
+            image = capturedImage
+            dismiss()
+        }
+    }
+
+    private var flashTitle: String {
+        switch camera.flashMode {
+        case .on:
+            return "开启"
+        case .off:
+            return "关闭"
+        default:
+            return "自动"
+        }
+    }
+
+    private var flashIcon: String {
+        switch camera.flashMode {
+        case .on:
+            return "bolt.fill"
+        case .off:
+            return "bolt.slash.fill"
+        default:
+            return "bolt.fill"
+        }
+    }
+
+    private func cameraControlButton(
+        systemName: String,
+        accessibilityLabel: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.white)
+                .frame(width: 58, height: 58)
+                .background(.black.opacity(0.64), in: Circle())
+                .overlay {
+                    Circle()
+                        .stroke(.white.opacity(0.18), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct CameraPreview: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> CameraPreviewUIView {
+        let view = CameraPreviewUIView()
+        view.previewLayer.session = session
+        view.previewLayer.videoGravity = .resizeAspectFill
+        return view
+    }
+
+    func updateUIView(_ uiView: CameraPreviewUIView, context: Context) {
+        uiView.previewLayer.session = session
+    }
+}
+
+private final class CameraPreviewUIView: UIView {
+    override class var layerClass: AnyClass {
+        AVCaptureVideoPreviewLayer.self
+    }
+
+    var previewLayer: AVCaptureVideoPreviewLayer {
+        layer as! AVCaptureVideoPreviewLayer
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if let connection = previewLayer.connection,
+           connection.isVideoRotationAngleSupported(90) {
+            connection.videoRotationAngle = 90
+        }
+    }
+}
+
+private final class CameraController: NSObject, ObservableObject, AVCapturePhotoCaptureDelegate {
+    let session = AVCaptureSession()
+
+    @Published private(set) var capturedImage: UIImage?
+    @Published private(set) var errorMessage: String?
+    @Published private(set) var flashMode: AVCaptureDevice.FlashMode = .auto
+    @Published private(set) var isFlashAvailable = false
+    @Published private(set) var isCapturing = false
+
+    private let photoOutput = AVCapturePhotoOutput()
+    private let sessionQueue = DispatchQueue(label: "com.caloriecapture.camera.session")
+    private var currentInput: AVCaptureDeviceInput?
+    private var cameraPosition: AVCaptureDevice.Position = .back
+    private var isConfigured = false
+
+    func start() {
+        switch AVCaptureDevice.authorizationStatus(for: .video) {
+        case .authorized:
+            startAuthorizedSession()
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
+                if granted {
+                    self?.startAuthorizedSession()
+                } else {
+                    self?.publishError("请在系统设置中允许相机权限。")
+                }
+            }
+        case .denied, .restricted:
+            publishError("请在系统设置中允许相机权限。")
+        @unknown default:
+            publishError("当前无法使用相机。")
+        }
+    }
+
+    func stop() {
+        sessionQueue.async { [weak self] in
+            guard let self, self.session.isRunning else { return }
+            self.session.stopRunning()
+        }
+    }
+
+    func capturePhoto() {
+        guard !isCapturing else { return }
+        isCapturing = true
+        let requestedFlashMode = flashMode
+
+        sessionQueue.async { [weak self] in
+            guard let self, self.session.isRunning else {
+                DispatchQueue.main.async {
+                    self?.isCapturing = false
+                }
+                return
+            }
+
+            let settings = AVCapturePhotoSettings()
+            if self.currentInput?.device.hasFlash == true {
+                settings.flashMode = requestedFlashMode
+            }
+
+            if let connection = self.photoOutput.connection(with: .video),
+               connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90
+            }
+
+            self.photoOutput.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    func cycleFlashMode() {
+        guard isFlashAvailable else { return }
+        switch flashMode {
+        case .auto:
+            flashMode = .on
+        case .on:
+            flashMode = .off
+        default:
+            flashMode = .auto
+        }
+    }
+
+    func switchCamera() {
+        sessionQueue.async { [weak self] in
+            guard let self, self.isConfigured else { return }
+
+            let newPosition: AVCaptureDevice.Position = self.cameraPosition == .back ? .front : .back
+            guard let newDevice = AVCaptureDevice.default(
+                .builtInWideAngleCamera,
+                for: .video,
+                position: newPosition
+            ), let newInput = try? AVCaptureDeviceInput(device: newDevice) else {
+                return
+            }
+
+            self.session.beginConfiguration()
+            if let currentInput = self.currentInput {
+                self.session.removeInput(currentInput)
+            }
+
+            if self.session.canAddInput(newInput) {
+                self.session.addInput(newInput)
+                self.currentInput = newInput
+                self.cameraPosition = newPosition
+            } else if let currentInput = self.currentInput,
+                      self.session.canAddInput(currentInput) {
+                self.session.addInput(currentInput)
+            }
+            self.session.commitConfiguration()
+
+            let hasFlash = newPosition == .back && newDevice.hasFlash
+            DispatchQueue.main.async {
+                self.isFlashAvailable = hasFlash
+                if !hasFlash {
+                    self.flashMode = .off
+                }
+            }
+        }
+    }
+
+    func photoOutput(
+        _ output: AVCapturePhotoOutput,
+        didFinishProcessingPhoto photo: AVCapturePhoto,
+        error: Error?
+    ) {
+        if let error {
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                self.errorMessage = "拍照失败：\(error.localizedDescription)"
+            }
+            return
         }
 
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            parent.dismiss()
+        guard let data = photo.fileDataRepresentation(),
+              let image = UIImage(data: data) else {
+            DispatchQueue.main.async {
+                self.isCapturing = false
+                self.errorMessage = "无法读取拍摄的照片，请重试。"
+            }
+            return
+        }
+
+        DispatchQueue.main.async {
+            self.isCapturing = false
+            self.capturedImage = image
+        }
+    }
+
+    private func startAuthorizedSession() {
+        sessionQueue.async { [weak self] in
+            guard let self, self.configureSessionIfNeeded() else { return }
+            if !self.session.isRunning {
+                self.session.startRunning()
+            }
+        }
+    }
+
+    private func configureSessionIfNeeded() -> Bool {
+        if isConfigured { return true }
+
+        session.beginConfiguration()
+        defer { session.commitConfiguration() }
+        session.sessionPreset = .photo
+
+        guard let device = AVCaptureDevice.default(
+            .builtInWideAngleCamera,
+            for: .video,
+            position: .back
+        ) else {
+            publishError("当前设备没有可用的相机。")
+            return false
+        }
+
+        do {
+            let input = try AVCaptureDeviceInput(device: device)
+            guard session.canAddInput(input), session.canAddOutput(photoOutput) else {
+                publishError("相机初始化失败，请稍后重试。")
+                return false
+            }
+
+            session.addInput(input)
+            session.addOutput(photoOutput)
+            currentInput = input
+            isConfigured = true
+
+            DispatchQueue.main.async {
+                self.isFlashAvailable = device.hasFlash
+            }
+            return true
+        } catch {
+            publishError("相机初始化失败：\(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func publishError(_ message: String) {
+        DispatchQueue.main.async {
+            self.errorMessage = message
+            self.isCapturing = false
         }
     }
 }
@@ -3430,7 +4226,7 @@ struct PreferenceRowWithActions: View {
                     Button(action: onRecord) {
                         Image(systemName: "plus.circle.fill")
                             .font(.title2)
-                            .foregroundStyle(isRecordedForDate ? Color.green : Color.secondary)
+                            .foregroundStyle(isRecordedForDate ? Color.blue : Color.secondary)
                             .frame(width: 40, height: 36)
                             .contentShape(Rectangle())
                     }
@@ -3495,7 +4291,7 @@ struct BrandAutocompleteField: View {
     let brands: [String]
     var placeholder = "品牌"
     var style: BrandAutocompleteStyle = .inset
-    var inputBackground = Color(.systemBackground)
+    var inputBackground = AppSurfaceStyle.formInputBackground
     var textAlignment: TextAlignment = .leading
 
     @FocusState private var isFocused: Bool
@@ -3552,7 +4348,7 @@ struct BrandAutocompleteField: View {
                                     .lineLimit(1)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 6)
-                                    .background(Color(.systemGray5))
+                                    .background(AppSurfaceStyle.formInputBackground)
                                     .clipShape(Capsule())
                             }
                             .buttonStyle(.plain)

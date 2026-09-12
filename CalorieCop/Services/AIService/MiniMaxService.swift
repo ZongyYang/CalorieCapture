@@ -1,16 +1,134 @@
 import Foundation
 import UIKit
 
+/// Parses meal summaries whose total energy and all three macronutrients were
+/// explicitly supplied by the user. This deliberately runs on device before
+/// any network request: the values are facts supplied by the user, not values
+/// that need an AI estimate.
+enum NutritionSummaryParser {
+    static func canParse(_ input: String) -> Bool {
+        parse(input) != nil
+    }
+
+    static func parse(_ input: String) -> NutritionInfo? {
+        let normalizedInput = input
+            .replacingOccurrences(of: "，", with: ",")
+            .replacingOccurrences(of: "；", with: ";")
+            .replacingOccurrences(of: "：", with: ":")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // Nutrients described per 100 g are reference values, not the total
+        // intake that this shortcut is meant to record.
+        guard !normalizedInput.localizedCaseInsensitiveContains("每100"),
+              !normalizedInput.localizedCaseInsensitiveContains("per 100"),
+              let calories = totalCalories(in: normalizedInput),
+              let protein = value(
+                in: normalizedInput,
+                labels: ["蛋白质", "蛋白"]
+              ),
+              let carbohydrates = value(
+                in: normalizedInput,
+                labels: ["碳水化合物", "碳水"]
+              ),
+              let fat = value(
+                in: normalizedInput,
+                labels: ["脂肪"]
+              ) else {
+            return nil
+        }
+
+        let grams = intakeQuantity(in: normalizedInput) ?? 0
+        let quantityNote = grams > 0
+            ? "已直接采用输入的总热量和营养成分，未进行 AI 推断。"
+            : "已直接采用输入的总热量和营养成分，未进行 AI 推断；摄入量未提供，可按需编辑。"
+
+        return NutritionInfo(
+            foodName: foodName(from: normalizedInput),
+            grams: grams,
+            calories: calories,
+            protein: protein,
+            carbohydrates: carbohydrates,
+            fat: fat,
+            confidence: "manual",
+            notes: quantityNote
+        )
+    }
+
+    private static func totalCalories(in input: String) -> Double? {
+        guard let match = firstMatch(
+            pattern: #"(?:总\s*(?:热量|能量)|总计|合计|热量|能量)\s*(?:约|≈|=|为|是|:)?\s*([0-9]+(?:[\.,][0-9]+)?)\s*(千卡|大卡|卡路里|kcal|千焦|kj)"#,
+            in: input
+        ), let value = number(from: match, in: input, at: 1) else {
+            return nil
+        }
+
+        let unit = string(from: match, in: input, at: 2)?.lowercased() ?? ""
+        return unit == "千焦" || unit == "kj" ? value / 4.184 : value
+    }
+
+    private static func value(in input: String, labels: [String]) -> Double? {
+        let escapedLabels = labels.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+        let pattern = #"(?:"# + escapedLabels + #")\s*(?:含量)?\s*(?:约|≈|=|为|是|:)?\s*([0-9]+(?:[\.,][0-9]+)?)\s*(?:g|克)"#
+        guard let match = firstMatch(pattern: pattern, in: input) else { return nil }
+        return number(from: match, in: input, at: 1)
+    }
+
+    private static func intakeQuantity(in input: String) -> Double? {
+        guard let match = firstMatch(
+            pattern: #"(?:摄入量|食用量|份量|重量|净含量|规格)\s*(?:约|≈|=|为|是|:)?\s*([0-9]+(?:[\.,][0-9]+)?)\s*(?:g|克|ml|毫升)"#,
+            in: input
+        ) else {
+            return nil
+        }
+        return number(from: match, in: input, at: 1)
+    }
+
+    private static func foodName(from input: String) -> String {
+        let firstClause = input
+            .split(whereSeparator: { ",;。.!！？?\n".contains($0) })
+            .first
+            .map(String.init) ?? ""
+        let removablePrefixes = ["今天", "今日", "早餐", "午餐", "晚餐", "夜宵", "我吃了", "吃了", "记录"]
+        var name = firstClause.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        for prefix in removablePrefixes where name.hasPrefix(prefix) {
+            name = String(name.dropFirst(prefix.count))
+                .trimmingCharacters(in: CharacterSet(charactersIn: " :"))
+        }
+
+        return name.isEmpty || name.contains("热量") || name.contains("能量")
+            ? "本次摄入"
+            : name
+    }
+
+    private static func firstMatch(pattern: String, in input: String) -> NSTextCheckingResult? {
+        let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive])
+        let range = NSRange(input.startIndex..., in: input)
+        return expression?.firstMatch(in: input, options: [], range: range)
+    }
+
+    private static func number(from match: NSTextCheckingResult, in input: String, at index: Int) -> Double? {
+        guard let text = string(from: match, in: input, at: index) else { return nil }
+        return Double(text.replacingOccurrences(of: ",", with: "."))
+    }
+
+    private static func string(from match: NSTextCheckingResult, in input: String, at index: Int) -> String? {
+        let range = match.range(at: index)
+        guard range.location != NSNotFound, let swiftRange = Range(range, in: input) else {
+            return nil
+        }
+        return String(input[swiftRange])
+    }
+}
+
 final class MiniMaxService: AIServiceProtocol {
     // Endpoints are now dynamic based on user's region setting
     private var endpoint: URL { APIKeyManager.miniMaxEndpoint }
-    private var deepSeekEndpoint: URL { APIKeyManager.deepSeekEndpoint }
+    private var deepSeekResponsesEndpoint: URL { APIKeyManager.deepSeekResponsesEndpoint }
     private var qwenEndpoint: URL { APIKeyManager.qwenEndpoint }
     // MiniMax-M2.7-highspeed for text parsing
-    private let miniMaxTextModel = "MiniMax-M2.7-highspeed"
-    private let deepSeekTextModel = "deepseek-v4-flash"
     private let qwenTextModel = "qwen-plus"
-    private let qwenVisionModel = "qwen3-vl-plus"
+    private let deepSeekVisionModel = "deepseek-v4-flash-vision-exp"
     private let logger = DebugLogger.shared
 
     func parseFoodInput(_ input: String) async throws -> NutritionInfo {
@@ -32,59 +150,52 @@ final class MiniMaxService: AIServiceProtocol {
             throw AIServiceError.parsingError("请输入食物描述")
         }
 
-        guard APIKeyManager.isDeepSeekConfigured || APIKeyManager.isMiniMaxConfigured || APIKeyManager.isQwenConfigured else {
-            throw AIServiceError.apiKeyNotConfigured
+        if let summary = NutritionSummaryParser.parse(trimmedInput) {
+            logger.log("Used direct nutrition summary from text input")
+            return [summary]
         }
 
-        let systemPrompt = FoodParsingPrompt.systemPrompt(with: preferences)
-        var parseErrors: [String] = []
-
-        if APIKeyManager.isDeepSeekConfigured {
-            do {
-                return try await parseFoodTextWithDeepSeek(trimmedInput, systemPrompt: systemPrompt)
-            } catch {
-                logger.logError(error, context: "DeepSeek text parsing failed, trying MiniMax fallback")
-                parseErrors.append("DeepSeek：\(compactError(error))")
-            }
-        } else {
-            parseErrors.append("DeepSeek：未配置")
+        let selectedModel = APIKeyManager.textParsingModel
+        guard APIKeyManager.isTextParsingModelConfigured(selectedModel) else {
+            throw AIServiceError.parsingError(
+                "已选择 \(selectedModel.displayName)，请先在设置中配置 \(selectedModel.providerName) API 密钥。"
+            )
         }
 
-        if APIKeyManager.isMiniMaxConfigured {
+        return try await parseFoodText(
+            trimmedInput,
+            using: selectedModel,
+            systemPrompt: FoodParsingPrompt.systemPrompt(with: preferences)
+        )
+    }
+
+    private func parseFoodText(
+        _ input: String,
+        using selectedModel: TextParsingModel,
+        systemPrompt: String
+    ) async throws -> [NutritionInfo] {
+        switch selectedModel {
+        case .flash, .pro:
+            return try await parseFoodTextWithDeepSeek(
+                input,
+                systemPrompt: systemPrompt,
+                model: selectedModel.apiModelName,
+                reasoningEnabled: selectedModel.usesDeepSeekReasoning
+            )
+        case .highspeed:
             let requestBody = MiniMaxRequest(
-                model: miniMaxTextModel,
+                model: selectedModel.apiModelName,
                 messages: [
                     Message(role: "system", content: .text(systemPrompt)),
-                    Message(role: "user", content: .text(trimmedInput))
+                    Message(role: "user", content: .text(input))
                 ]
             )
-
-            do {
-                return try await sendRequestMultiple(requestBody)
-            } catch {
-                logger.logError(error, context: "MiniMax text parsing failed, trying Qwen fallback")
-                parseErrors.append("MiniMax：\(compactError(error))")
-            }
-        } else {
-            parseErrors.append("MiniMax：未配置")
+            return try await sendRequestMultiple(requestBody)
         }
-
-        if APIKeyManager.isQwenConfigured {
-            do {
-                return try await parseFoodTextWithQwen(trimmedInput, systemPrompt: systemPrompt)
-            } catch {
-                logger.logError(error, context: "Qwen text parsing failed")
-                parseErrors.append("Qwen：\(compactError(error))")
-            }
-        } else {
-            parseErrors.append("Qwen：未配置")
-        }
-
-        throw AIServiceError.parsingError("文字解析失败。\n\(parseErrors.joined(separator: "\n"))")
     }
 
     func parseFoodImage(_ image: UIImage, additionalContext: String? = nil, preferences: [FoodPreference] = []) async throws -> NutritionInfo {
-        // Use Qwen VL Plus for image parsing (MiniMax vision models not available via API)
+        // Food photos use DeepSeek Vision, independent of the text model selected in the UI.
         let items = try await parseFoodImageMultiple(image, additionalContext: additionalContext, preferences: preferences)
         guard let first = items.first else {
             throw AIServiceError.parsingError("未能识别图片中的食物")
@@ -93,7 +204,7 @@ final class MiniMaxService: AIServiceProtocol {
     }
 
     func parseFoodImageMultiple(_ image: UIImage, additionalContext: String? = nil, preferences: [FoodPreference] = []) async throws -> [NutritionInfo] {
-        guard let apiKey = APIKeyManager.qwenAPIKey, !apiKey.isEmpty else {
+        guard let apiKey = APIKeyManager.deepSeekAPIKey, !apiKey.isEmpty else {
             throw AIServiceError.apiKeyNotConfigured
         }
 
@@ -113,87 +224,35 @@ final class MiniMaxService: AIServiceProtocol {
 
         let systemPrompt = FoodParsingPrompt.systemPrompt(with: preferences)
 
-        // Build Qwen VL Plus request (OpenAI-compatible format)
-        let requestBody: [String: Any] = [
-            "model": qwenVisionModel,
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": [
-                    ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64,\(base64String)"]],
-                    ["type": "text", "text": userPrompt]
-                ]]
+        return try await requestDeepSeekResponse(
+            model: deepSeekVisionModel,
+            systemPrompt: systemPrompt,
+            content: [
+                ["type": "input_text", "text": userPrompt],
+                [
+                    "type": "input_image",
+                    "image_url": "data:image/jpeg;base64,\(base64String)",
+                    "detail": "low"
+                ]
             ],
-            "temperature": 0.1,
-            "stream": false
-        ]
-
-        // Use dynamic endpoint based on user's region setting
-        var request = URLRequest(url: qwenEndpoint)
-        request.httpMethod = "POST"
-        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
-        logger.logAPIRequest(endpoint: qwenEndpoint.absoluteString, body: "model=\(qwenVisionModel), imageBytes=\(imageData.count)")
-
-        let (data, response) = try await URLSession.shared.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw AIServiceError.invalidResponse
-        }
-
-        // Debug - log raw response
-        let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
-        logger.logAPIResponse(statusCode: httpResponse.statusCode, body: rawString)
-
-        guard (200...299).contains(httpResponse.statusCode) else {
-            throw AIServiceError.parsingError("Qwen API Error (\(httpResponse.statusCode)): \(rawString)")
-        }
-
-        // Parse Qwen response (OpenAI-compatible format)
-        struct QwenResponse: Decodable {
-            let choices: [Choice]?
-            let error: QwenError?
-
-            struct Choice: Decodable {
-                let message: Message
-                struct Message: Decodable {
-                    let content: String
-                }
-            }
-
-            struct QwenError: Decodable {
-                let message: String?
-                let code: String?
-            }
-        }
-
-        let qwenResponse: QwenResponse
-        do {
-            qwenResponse = try JSONDecoder().decode(QwenResponse.self, from: data)
-        } catch {
-            logger.logError(error, context: "Qwen response decode")
-            throw AIServiceError.parsingError("Qwen响应格式错误: \(rawString.prefix(300))")
-        }
-
-        // Check for API error
-        if let error = qwenResponse.error {
-            throw AIServiceError.parsingError("Qwen错误: \(error.message ?? error.code ?? "未知错误")")
-        }
-
-        guard let content = qwenResponse.choices?.first?.message.content else {
-            throw AIServiceError.parsingError("Qwen返回为空: \(rawString.prefix(300))")
-        }
-
-        return try decodeNutritionList(from: content, context: "Qwen image")
+            reasoningEffort: "none",
+            imageBytes: imageData.count,
+            apiKey: apiKey,
+            context: "DeepSeek image"
+        )
     }
 
-    private func parseFoodTextWithQwen(_ input: String, systemPrompt: String) async throws -> [NutritionInfo] {
+    private func parseFoodTextWithQwen(
+        _ input: String,
+        systemPrompt: String,
+        model: String? = nil
+    ) async throws -> [NutritionInfo] {
         guard let apiKey = APIKeyManager.qwenAPIKey, !apiKey.isEmpty else {
             throw AIServiceError.apiKeyNotConfigured
         }
 
         let requestBody: [String: Any] = [
-            "model": qwenTextModel,
+            "model": model ?? qwenTextModel,
             "messages": [
                 ["role": "system", "content": systemPrompt],
                 ["role": "user", "content": input]
@@ -258,64 +317,77 @@ final class MiniMaxService: AIServiceProtocol {
         return try decodeNutritionList(from: content, context: "Qwen text")
     }
 
-    private func parseFoodTextWithDeepSeek(_ input: String, systemPrompt: String) async throws -> [NutritionInfo] {
+    private func parseFoodTextWithDeepSeek(
+        _ input: String,
+        systemPrompt: String,
+        model: String,
+        reasoningEnabled: Bool
+    ) async throws -> [NutritionInfo] {
         guard let apiKey = APIKeyManager.deepSeekAPIKey, !apiKey.isEmpty else {
             throw AIServiceError.apiKeyNotConfigured
         }
 
+        return try await requestDeepSeekResponse(
+            model: model,
+            systemPrompt: systemPrompt,
+            content: [["type": "input_text", "text": input]],
+            reasoningEffort: reasoningEnabled ? "high" : "none",
+            apiKey: apiKey,
+            context: "DeepSeek text"
+        )
+    }
+
+    /// Uses DeepSeek's Responses API so the model can automatically look up
+    /// branded or otherwise uncertain food details before returning nutrition JSON.
+    private func requestDeepSeekResponse(
+        model: String,
+        systemPrompt: String,
+        content: [[String: Any]],
+        reasoningEffort: String,
+        imageBytes: Int? = nil,
+        apiKey: String,
+        context: String
+    ) async throws -> [NutritionInfo] {
         let requestBody: [String: Any] = [
-            "model": deepSeekTextModel,
-            "messages": [
-                ["role": "system", "content": systemPrompt],
-                ["role": "user", "content": input]
-            ],
+            "model": model,
+            "instructions": systemPrompt,
+            "input": [["role": "user", "content": content]],
+            "reasoning": ["effort": reasoningEffort],
             "temperature": 0.1,
+            // The server decides whether a search is useful, so simple meals do
+            // not always pay the latency cost of a web lookup.
+            "tools": [["type": "web_search"]],
+            "tool_choice": "auto",
             "stream": false
         ]
 
-        var request = URLRequest(url: deepSeekEndpoint)
+        var request = URLRequest(url: deepSeekResponsesEndpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        let bodyData = try JSONSerialization.data(withJSONObject: requestBody)
-        request.httpBody = bodyData
-        logger.logAPIRequest(endpoint: deepSeekEndpoint.absoluteString, body: String(data: bodyData, encoding: .utf8))
+        request.httpBody = try JSONSerialization.data(withJSONObject: requestBody)
+        let metadata = imageBytes.map { ", imageBytes=\($0)" } ?? ""
+        logger.logAPIRequest(
+            endpoint: deepSeekResponsesEndpoint.absoluteString,
+            body: "model=\(model), webSearch=auto\(metadata)"
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
-
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AIServiceError.invalidResponse
         }
 
         let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
         logger.logAPIResponse(statusCode: httpResponse.statusCode, body: rawString)
-
         guard (200...299).contains(httpResponse.statusCode) else {
             throw AIServiceError.parsingError("DeepSeek API Error (\(httpResponse.statusCode)): \(rawString.prefix(300))")
         }
 
-        struct DeepSeekTextResponse: Decodable {
-            let choices: [Choice]?
-            let error: DeepSeekError?
-
-            struct Choice: Decodable {
-                let message: Message
-                struct Message: Decodable {
-                    let content: String
-                }
-            }
-
-            struct DeepSeekError: Decodable {
-                let message: String?
-                let code: String?
-            }
-        }
-
-        let deepSeekResponse: DeepSeekTextResponse
+        let deepSeekResponse: DeepSeekResponsesResponse
         do {
-            deepSeekResponse = try JSONDecoder().decode(DeepSeekTextResponse.self, from: data)
+            deepSeekResponse = try JSONDecoder().decode(DeepSeekResponsesResponse.self, from: data)
         } catch {
-            logger.logError(error, context: "DeepSeek text response decode")
+            logger.logError(error, context: "DeepSeek Responses decode")
             throw AIServiceError.parsingError("DeepSeek响应格式错误: \(rawString.prefix(300))")
         }
 
@@ -323,11 +395,43 @@ final class MiniMaxService: AIServiceProtocol {
             throw AIServiceError.parsingError("DeepSeek错误: \(error.message ?? error.code ?? "未知错误")")
         }
 
-        guard let content = deepSeekResponse.choices?.first?.message.content else {
+        guard deepSeekResponse.status == nil || deepSeekResponse.status == "completed",
+              let outputText = deepSeekResponse.outputText,
+              !outputText.isEmpty else {
             throw AIServiceError.parsingError("DeepSeek返回为空: \(rawString.prefix(300))")
         }
 
-        return try decodeNutritionList(from: content, context: "DeepSeek text")
+        return try decodeNutritionList(from: outputText, context: context)
+    }
+
+    private struct DeepSeekResponsesResponse: Decodable {
+        let status: String?
+        let output: [OutputItem]?
+        let error: ResponseError?
+
+        struct OutputItem: Decodable {
+            let content: [ContentPart]?
+        }
+
+        struct ContentPart: Decodable {
+            let type: String?
+            let text: String?
+        }
+
+        struct ResponseError: Decodable {
+            let message: String?
+            let code: String?
+        }
+
+        var outputText: String? {
+            let text = output?
+                .flatMap { $0.content ?? [] }
+                .compactMap { part in
+                    part.type == "output_text" ? part.text : nil
+                }
+                .joined(separator: "\n") ?? ""
+            return text.isEmpty ? nil : text
+        }
     }
 
     private func sendRequestMultiple(_ requestBody: MiniMaxRequest) async throws -> [NutritionInfo] {

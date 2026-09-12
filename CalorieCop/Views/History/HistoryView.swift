@@ -166,7 +166,7 @@ struct HistoryView: View {
                     historyList
                 }
             }
-            .navigationTitle("历史记录")
+            .navigationTitle("历史")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     AIAdvisorToolbarButton(isPresented: $showingAIAdvisor)

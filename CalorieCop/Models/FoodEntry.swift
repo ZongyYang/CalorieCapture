@@ -27,6 +27,23 @@ enum FoodEntryCategory: String, CaseIterable, Identifiable, Codable {
             return "g"
         }
     }
+
+    static func inferred(for foodName: String, description: String = "") -> FoodEntryCategory {
+        if description.localizedCaseInsensitiveContains("ml") {
+            return .drink
+        }
+
+        let normalizedName = foodName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let drinkKeywords = [
+            "豆浆", "牛奶", "奶茶", "咖啡", "拿铁", "美式", "果汁", "饮料", "饮品",
+            "汽水", "可乐", "苏打水", "气泡水", "矿泉水", "纯净水", "椰子水", "柠檬水",
+            "蜂蜜水", "绿茶", "红茶", "乌龙茶", "普洱茶", "花茶", "啤酒", "红酒",
+            "白酒", "鸡尾酒", "酸奶", "乳饮"
+        ]
+        return drinkKeywords.contains(where: normalizedName.contains) ? .drink : .meal
+    }
 }
 
 enum FoodMealType: String, CaseIterable, Identifiable, Codable {
@@ -183,5 +200,48 @@ final class FoodEntry {
     private static func normalizedOptionalText(_ text: String?) -> String? {
         let trimmedText = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return trimmedText.isEmpty ? nil : trimmedText
+    }
+}
+
+extension Array where Element == FoodEntry {
+    func unsavedSearchSuggestions(
+        matching query: String,
+        on date: Date,
+        excluding preferences: [FoodPreference],
+        limit: Int = 3
+    ) -> [FoodEntry] {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedQuery.isEmpty, limit > 0 else { return [] }
+
+        let calendar = Calendar.current
+        var seenFoods: Set<String> = []
+        var suggestions: [FoodEntry] = []
+
+        for entry in sorted(by: { $0.createdAt > $1.createdAt }) {
+            guard calendar.isDate(entry.createdAt, inSameDayAs: date),
+                  entry.foodName.localizedCaseInsensitiveContains(trimmedQuery)
+                    || (entry.brand?.localizedCaseInsensitiveContains(trimmedQuery) ?? false),
+                  !preferences.contains(where: {
+                      $0.matches(keyword: entry.foodName, brand: entry.brand)
+                  }) else {
+                continue
+            }
+
+            let normalizedName = entry.foodName
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            let normalizedBrand = entry.brand?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased() ?? ""
+            let foodKey = "\(normalizedName)|\(normalizedBrand)"
+            guard seenFoods.insert(foodKey).inserted else { continue }
+
+            suggestions.append(entry)
+            if suggestions.count == limit {
+                break
+            }
+        }
+
+        return suggestions
     }
 }
