@@ -17,7 +17,7 @@ private enum AppBuildInfo {
     }
 
     static var displayVersion: String {
-        "(marketingVersion) (Build (buildNumber))"
+        marketingVersion
     }
 }
 
@@ -101,8 +101,6 @@ struct AppSettingsView: View {
 
                 Section("版本") {
                     LabeledContent("应用版本", value: AppBuildInfo.displayVersion)
-                    LabeledContent("GitHub 提交", value: AppBuildInfo.sourceCommit)
-                        .font(.footnote.monospaced())
                 }
             }
             .navigationTitle("设置")

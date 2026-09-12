@@ -21,5 +21,5 @@ Before making changes, fetch and check the current branch, working tree, and ups
 
 - Keep `MARKETING_VERSION` as the user-facing release version, and increment `CURRENT_PROJECT_VERSION` for every source change that is built, installed to the iPhone, committed, and pushed.
 - Keep the app and widget on the same build number so an installed app and its widget can be matched to one delivery.
-- The app Settings page displays both the App Store-style version (`1.0 (Build N)`) and `CalorieCopSourceCommit`.
+- The app Settings page displays only the App Store-style version (`1.0.N`). Build number and `CalorieCopSourceCommit` remain embedded for diagnostic matching but are not shown in the UI.
 - For the final post-commit build, pass `CALORIECOP_SOURCE_COMMIT=$(git rev-parse --short HEAD)` to `xcodebuild`; use `development` only for local exploratory builds. This makes the installed iPhone build traceable to the exact GitHub commit.
