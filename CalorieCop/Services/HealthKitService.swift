@@ -18,6 +18,52 @@ struct DailyEnergyBurned: Identifiable {
 
 @MainActor
 final class HealthKitService: ObservableObject {
+    private static let foodEntryIDMetadataKey = "com.zyyang116.caloriecapture.foodEntryID"
+    private static let nutritionSyncStateKey = "healthkit.nutrition.syncState.v2"
+    private static var authorizationTask: Task<Void, Error>?
+
+    private enum NutritionSyncKind: String, CaseIterable {
+        case energy
+        case protein
+        case carbohydrates
+        case fat
+
+        var type: HKQuantityType {
+            switch self {
+            case .energy:
+                return HKQuantityType(.dietaryEnergyConsumed)
+            case .protein:
+                return HKQuantityType(.dietaryProtein)
+            case .carbohydrates:
+                return HKQuantityType(.dietaryCarbohydrates)
+            case .fat:
+                return HKQuantityType(.dietaryFatTotal)
+            }
+        }
+
+        var unit: HKUnit {
+            switch self {
+            case .energy:
+                return .kilocalorie()
+            case .protein, .carbohydrates, .fat:
+                return .gram()
+            }
+        }
+
+        func amount(for entry: FoodEntry) -> Double {
+            switch self {
+            case .energy:
+                return entry.calories
+            case .protein:
+                return entry.protein
+            case .carbohydrates:
+                return entry.carbohydrates
+            case .fat:
+                return entry.fat
+            }
+        }
+    }
+
     private let healthStore = HKHealthStore()
 
     @Published var isAuthorized = false
@@ -44,19 +90,149 @@ final class HealthKitService: ObservableObject {
             return
         }
 
-        let typesToRead: Set<HKObjectType> = [
+        let nutritionTypes = NutritionSyncKind.allCases.map(\.type)
+        var typesToRead: Set<HKObjectType> = [
             HKQuantityType(.activeEnergyBurned),
             HKQuantityType(.basalEnergyBurned),
             HKQuantityType(.bodyMass)
         ]
+        typesToRead.formUnion(nutritionTypes.map { $0 as HKObjectType })
+        let typesToShare = Set(nutritionTypes.map { $0 as HKSampleType })
+
+        let authorizationTask: Task<Void, Error>
+        if let existingTask = Self.authorizationTask {
+            authorizationTask = existingTask
+        } else {
+            let newTask = Task {
+                try await healthStore.requestAuthorization(toShare: typesToShare, read: typesToRead)
+            }
+            Self.authorizationTask = newTask
+            authorizationTask = newTask
+        }
 
         do {
-            try await healthStore.requestAuthorization(toShare: [], read: typesToRead)
+            try await authorizationTask.value
             isAuthorized = true
             await fetchTodayCaloriesBurned()
             await fetchWeightHistory()
         } catch {
+            Self.authorizationTask = nil
             authorizationError = "Failed to authorize HealthKit: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Nutrition Sync
+
+    /// Keeps CalorieCop entries and HealthKit nutrition samples in sync. Each entry
+    /// owns one sample per nutrient, identified by private metadata. This allows
+    /// edits and deletions without touching nutrition data written by other apps.
+    func synchronizeNutrition(with entries: [FoodEntry]) async {
+        guard isHealthKitAvailable else { return }
+
+        var syncState = UserDefaults.standard.dictionary(forKey: Self.nutritionSyncStateKey) as? [String: String] ?? [:]
+        let currentEntryIDs = Set(entries.map { $0.id.uuidString })
+
+        for kind in NutritionSyncKind.allCases {
+            guard !Task.isCancelled,
+                  healthStore.authorizationStatus(for: kind.type) == .sharingAuthorized else {
+                continue
+            }
+
+            let deletedStateKeys = syncState.keys.filter { stateKey in
+                let components = stateKey.split(separator: "|", maxSplits: 1).map(String.init)
+                return components.count == 2
+                    && components[1] == kind.rawValue
+                    && !currentEntryIDs.contains(components[0])
+            }
+            let pendingEntries = entries.filter { entry in
+                let entryID = entry.id.uuidString
+                let amount = kind.amount(for: entry)
+                let stateKey = "\(entryID)|\(kind.rawValue)"
+                let signature = nutritionSignature(amount: amount, date: entry.createdAt)
+                return syncState[stateKey] != signature
+            }
+
+            let pendingEntryIDs = pendingEntries.map { $0.id.uuidString }
+            let deletedEntryIDs = deletedStateKeys.compactMap {
+                $0.split(separator: "|", maxSplits: 1).first.map(String.init)
+            }
+            let entryIDsToReplace = Set(pendingEntryIDs + deletedEntryIDs)
+
+            guard !entryIDsToReplace.isEmpty else { continue }
+
+            do {
+                try await deleteNutritionSamples(forEntryIDs: entryIDsToReplace, type: kind.type)
+
+                let samples: [HKObject] = pendingEntries.compactMap { entry in
+                    let amount = kind.amount(for: entry)
+                    guard amount > 0 else { return nil }
+
+                    return HKQuantitySample(
+                        type: kind.type,
+                        quantity: HKQuantity(unit: kind.unit, doubleValue: amount),
+                        start: entry.createdAt,
+                        end: entry.createdAt,
+                        metadata: [Self.foodEntryIDMetadataKey: entry.id.uuidString]
+                    )
+                }
+                try await saveHealthKitObjects(samples)
+
+                deletedStateKeys.forEach { syncState.removeValue(forKey: $0) }
+                for entry in pendingEntries {
+                    let amount = kind.amount(for: entry)
+                    let stateKey = "\(entry.id.uuidString)|\(kind.rawValue)"
+                    syncState[stateKey] = nutritionSignature(amount: amount, date: entry.createdAt)
+                }
+                persistNutritionSyncState(syncState)
+            } catch {
+                authorizationError = "无法将营养摄入同步到健康 App：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func nutritionSignature(amount: Double, date: Date) -> String {
+        "\(amount.bitPattern):\(date.timeIntervalSinceReferenceDate.bitPattern)"
+    }
+
+    private func persistNutritionSyncState(_ syncState: [String: String]) {
+        UserDefaults.standard.set(syncState, forKey: Self.nutritionSyncStateKey)
+    }
+
+    private func deleteNutritionSamples(
+        forEntryIDs entryIDs: Set<String>,
+        type: HKQuantityType
+    ) async throws {
+        let predicate = HKQuery.predicateForObjects(
+            withMetadataKey: Self.foodEntryIDMetadataKey,
+            allowedValues: Array(entryIDs)
+        )
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            healthStore.deleteObjects(of: type, predicate: predicate) { success, _, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if success {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: HealthKitSyncError.deleteFailed)
+                }
+            }
+        }
+    }
+
+    private func saveHealthKitObjects(_ objects: [HKObject]) async throws {
+        guard !objects.isEmpty else { return }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            healthStore.save(objects) { success, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if success {
+                    continuation.resume()
+                } else {
+                    continuation.resume(throwing: HealthKitSyncError.saveFailed)
+                }
+            }
         }
     }
 
@@ -278,5 +454,19 @@ final class HealthKitService: ObservableObject {
             let avgWeight = records.reduce(0) { $0 + $1.weight } / Double(records.count)
             return WeightRecord(date: date, weight: avgWeight)
         }.sorted { $0.date < $1.date }
+    }
+}
+
+private enum HealthKitSyncError: LocalizedError {
+    case saveFailed
+    case deleteFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .saveFailed:
+            return "健康数据写入失败"
+        case .deleteFailed:
+            return "健康数据删除失败"
+        }
     }
 }

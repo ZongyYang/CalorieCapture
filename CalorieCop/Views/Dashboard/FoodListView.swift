@@ -8,6 +8,7 @@ struct FoodListView: View {
     @Query private var foodPreferences: [FoodPreference]
 
     @State private var entryToEdit: FoodEntry?
+    @State private var entryToDelete: FoodEntry?
     @State private var showingAllEntries = false
     @State private var autofillingNutritionEntryID: UUID?
     @State private var nutritionAutofillMessage: String?
@@ -52,6 +53,25 @@ struct FoodListView: View {
         } message: {
             Text(nutritionAutofillMessage ?? "")
         }
+        .alert(
+            "删除摄入记录",
+            isPresented: Binding(
+                get: { entryToDelete != nil },
+                set: { if !$0 { entryToDelete = nil } }
+            )
+        ) {
+            Button("取消", role: .cancel) {
+                entryToDelete = nil
+            }
+            Button("删除", role: .destructive) {
+                if let entryToDelete {
+                    deleteEntry(entryToDelete)
+                }
+                entryToDelete = nil
+            }
+        } message: {
+            Text("确定要删除“\(entryToDelete?.foodName ?? "这条食物")”的摄入记录吗？")
+        }
     }
 
     private var emptyState: some View {
@@ -77,18 +97,15 @@ struct FoodListView: View {
                     entry: entry,
                     showsPreferenceControl: true,
                     isSavedAsPreference: isSavedAsPreference(entry),
-                    isAutofillingNutrition: autofillingNutritionEntryID == entry.id,
+                    inlineActionDeletes: true,
                     onEdit: {
                         entryToEdit = entry
                     },
                     onTogglePreference: {
                         togglePreference(for: entry)
                     },
-                    onAutofillNutrition: {
-                        autofillNutrition(for: entry)
-                    },
                     onDelete: {
-                        deleteEntry(entry)
+                        entryToDelete = entry
                     }
                 )
                 .contextMenu {
@@ -105,7 +122,7 @@ struct FoodListView: View {
                     }
 
                     Button(role: .destructive) {
-                        deleteEntry(entry)
+                        entryToDelete = entry
                     } label: {
                         Label("删除", systemImage: "trash")
                     }

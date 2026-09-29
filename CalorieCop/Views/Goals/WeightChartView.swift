@@ -83,13 +83,6 @@ struct WeightChartView: View {
                 .foregroundStyle(.blue)
                 .interpolationMethod(.catmullRom)
 
-                AreaMark(
-                    x: .value("日期", record.date),
-                    y: .value("体重", convertWeight(record.weight))
-                )
-                .foregroundStyle(.blue.opacity(0.1))
-                .interpolationMethod(.catmullRom)
-
                 PointMark(
                     x: .value("日期", record.date),
                     y: .value("体重", convertWeight(record.weight))

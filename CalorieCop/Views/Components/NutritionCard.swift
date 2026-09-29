@@ -10,7 +10,7 @@ struct NutritionCard: View {
         VStack(spacing: 4) {
             Text(title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
             Text(value)
                 .font(.title2)
@@ -19,12 +19,16 @@ struct NutritionCard: View {
 
             Text(unit)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(color.opacity(0.1))
+        .background(color.opacity(0.14))
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(color.opacity(0.18), lineWidth: 1)
+        }
     }
 }
 

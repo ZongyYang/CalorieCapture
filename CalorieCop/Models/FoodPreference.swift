@@ -45,7 +45,10 @@ final class FoodPreference {
             }
 
             // Recover drink units for preferences saved before category was persisted.
-            return defaultDescription.localizedCaseInsensitiveContains("ml") ? .drink : .meal
+            return FoodEntryCategory.inferred(
+                for: keyword,
+                description: defaultDescription
+            )
         }
         set {
             categoryRawValue = newValue.rawValue
@@ -131,14 +134,15 @@ final class FoodPreference {
         protein: Double,
         carbs: Double,
         fat: Double,
-        category: FoodEntryCategory = .meal,
+        category: FoodEntryCategory? = nil,
         energyUnit: EnergyUnit = .kilocalorie
     ) {
+        let resolvedCategory = category ?? FoodEntryCategory.inferred(for: keyword)
         self.init(
             keyword: keyword,
             brand: brand,
-            defaultDescription: "\(Int(grams))\(category.quantityUnitSymbol), \(Int(calories))kcal",
-            category: category,
+            defaultDescription: "\(Int(grams))\(resolvedCategory.quantityUnitSymbol), \(Int(calories))kcal",
+            category: resolvedCategory,
             energyUnit: energyUnit
         )
         self.updateNutritionReference(
@@ -147,6 +151,20 @@ final class FoodPreference {
             protein: protein,
             carbs: carbs,
             fat: fat
+        )
+    }
+
+    convenience init(entry: FoodEntry) {
+        self.init(
+            keyword: entry.foodName,
+            brand: entry.brand,
+            grams: entry.grams,
+            calories: entry.calories,
+            protein: entry.protein,
+            carbs: entry.carbohydrates,
+            fat: entry.fat,
+            category: entry.category,
+            energyUnit: entry.energyUnit
         )
     }
 
