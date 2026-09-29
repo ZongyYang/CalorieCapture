@@ -78,6 +78,12 @@ struct AppSettingsView: View {
                                 .foregroundStyle(.orange)
                         }
                     }
+
+                    NavigationLink {
+                        LocalCodexOrderSettingsView()
+                    } label: {
+                        Label("Mac Codex", systemImage: "desktopcomputer")
+                    }
                 }
 
                 Section("数据") {

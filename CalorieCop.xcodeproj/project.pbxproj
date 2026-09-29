@@ -43,6 +43,7 @@
 		A1000025238ABCDE /* DataMigrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100025238ABCDE /* DataMigrationService.swift */; };
 		A1000026238ABCDE /* migration_data.json in Resources */ = {isa = PBXBuildFile; fileRef = A1100026238ABCDE /* migration_data.json */; };
 		A1000027238ABCDE /* WidgetLayoutTunerPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100027238ABCDE /* WidgetLayoutTunerPreview.swift */; };
+		A1000028238ABCDE /* LocalCodexOrderService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1100028238ABCDE /* LocalCodexOrderService.swift */; };
 		87965BED286C4D7DB7547707 /* CalorieCaptureWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55483589285C437AB8EF829C /* CalorieCaptureWidget.swift */; };
 		C2850791BF8942878D2581DB /* CalorieCaptureWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C18F1DBF5E76454F8A3A6B75 /* CalorieCaptureWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		F3EA0E95F69441D8BE8DF3F6 /* HealthKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A1100012238ABCDE /* HealthKit.framework */; };
@@ -111,6 +112,7 @@
 		A1100025238ABCDE /* DataMigrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataMigrationService.swift; sourceTree = "<group>"; };
 		A1100026238ABCDE /* migration_data.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = migration_data.json; sourceTree = "<group>"; };
 		A1100027238ABCDE /* WidgetLayoutTunerPreview.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetLayoutTunerPreview.swift; sourceTree = "<group>"; };
+		A1100028238ABCDE /* LocalCodexOrderService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalCodexOrderService.swift; sourceTree = "<group>"; };
 		153A7DA960AE4531B5D0E131 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		55483589285C437AB8EF829C /* CalorieCaptureWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalorieCaptureWidget.swift; sourceTree = "<group>"; };
 		70F8AEDEF2054DA58A2DA7E9 /* CalorieCaptureWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = CalorieCaptureWidget.entitlements; sourceTree = "<group>"; };
@@ -252,6 +254,7 @@
 				A1100005238ABCDE /* AIServiceProtocol.swift */,
 				A1100006238ABCDE /* MiniMaxService.swift */,
 				A1100007238ABCDE /* FoodParsingPrompt.swift */,
+				A1100028238ABCDE /* LocalCodexOrderService.swift */,
 			);
 			path = AIService;
 			sourceTree = "<group>";
@@ -457,6 +460,7 @@
 				A1000024238ABCDE /* APIKeySetupView.swift in Sources */,
 				A1000025238ABCDE /* DataMigrationService.swift in Sources */,
 				A1000027238ABCDE /* WidgetLayoutTunerPreview.swift in Sources */,
+				A1000028238ABCDE /* LocalCodexOrderService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -607,7 +611,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CALORIECOP_SOURCE_COMMIT = development;
-				CURRENT_PROJECT_VERSION = 49;
+				CURRENT_PROJECT_VERSION = 50;
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -646,7 +650,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CALORIECOP_SOURCE_COMMIT = development;
-				CURRENT_PROJECT_VERSION = 49;
+				CURRENT_PROJECT_VERSION = 50;
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -683,7 +687,7 @@
 				CODE_SIGN_ENTITLEMENTS = CalorieCaptureWidget/CalorieCaptureWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 49;
+				CURRENT_PROJECT_VERSION = 50;
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = CalorieCaptureWidget/Info.plist;
@@ -711,7 +715,7 @@
 				CODE_SIGN_ENTITLEMENTS = CalorieCaptureWidget/CalorieCaptureWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 49;
+				CURRENT_PROJECT_VERSION = 50;
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = CalorieCaptureWidget/Info.plist;

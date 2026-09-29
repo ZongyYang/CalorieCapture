@@ -58,6 +58,7 @@ struct FoodInputView: View {
     @State private var errorMessage: String?
     @State private var showConfirmation = false
     @State private var showMultipleConfirmation = false
+    @State private var isOrderScreenshotResult = false
     @State private var confirmationRawInput = ""
     @State private var confirmationInitialCategory: FoodEntryCategory = .meal
     @State private var confirmationInitialMealType: FoodMealType?
@@ -170,10 +171,10 @@ struct FoodInputView: View {
                         if isBackfillMode {
                             backfillBanner
                         }
+                    }
 
-                        if selectedImage != nil {
-                            imageInputSection
-                        }
+                    if selectedImage != nil {
+                        imageInputSection
                     }
 
                     savedPreferencesSection
@@ -268,6 +269,7 @@ struct FoodInputView: View {
             .sheet(isPresented: $showMultipleConfirmation) {
                 MultipleFoodConfirmationView(
                     nutritionList: parsedNutritionList,
+                    isOrderScreenshot: isOrderScreenshotResult,
                     onConfirm: { confirmedList in
                         saveMultipleFoodEntries(confirmedList)
                     }
@@ -464,7 +466,7 @@ struct FoodInputView: View {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
-                    Text("图片识别需要设置 DeepSeek API")
+                    Text("常规图片识别需要设置 DeepSeek API")
                         .font(.caption)
                     Spacer()
                     Button("设置") {
@@ -510,6 +512,15 @@ struct FoodInputView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color(.separator).opacity(0.25), lineWidth: 1)
                 }
+
+                Button {
+                    Task { await parseOrderScreenshot(image) }
+                } label: {
+                    Label(isLoading ? "正在识别订单" : "用 Mac Codex 识别订单截图", systemImage: "list.bullet.rectangle")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isLoading)
             } else {
                 HStack(spacing: 16) {
                     // Camera button
@@ -1235,6 +1246,7 @@ struct FoodInputView: View {
                 showConfirmation = true
             } else if nutritionList.count > 1 {
                 // Multiple items - show multiple confirmation
+                isOrderScreenshotResult = false
                 parsedNutritionList = nutritionList
                 showMultipleConfirmation = true
             } else {
@@ -1245,6 +1257,33 @@ struct FoodInputView: View {
         }
 
         isLoading = false
+    }
+
+    private func parseOrderScreenshot(_ image: UIImage) async {
+        guard LocalCodexOrderSettings.isConfigured else {
+            errorMessage = "请先在设置 > Mac Codex 中连接本机服务。"
+            showingSettings = true
+            return
+        }
+        isLoading = true
+        errorMessage = nil
+        defer { isLoading = false }
+        do {
+            let items = try await LocalCodexOrderService.parse(
+                image: image,
+                context: preferenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+            guard !items.isEmpty else {
+                errorMessage = "截图中未识别出食物，请检查图片或补充说明。"
+                return
+            }
+            inputText = "订单截图（待确认）"
+            isOrderScreenshotResult = true
+            parsedNutritionList = items
+            showMultipleConfirmation = true
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func clearSelectedImage() {
@@ -3102,6 +3141,7 @@ struct MultipleFoodConfirmationView: View {
     @Query private var existingPreferences: [FoodPreference]
 
     let onConfirm: ([NutritionInfo]) -> Void
+    let isOrderScreenshot: Bool
 
     @State private var originalRecognizedList: [NutritionInfo]
     @State private var editableList: [NutritionInfo]
@@ -3112,11 +3152,13 @@ struct MultipleFoodConfirmationView: View {
     @State private var preferenceSaveMessage: String?
     @State private var didLoadMatchedPreferences = false
 
-    init(nutritionList: [NutritionInfo], onConfirm: @escaping ([NutritionInfo]) -> Void) {
+    init(nutritionList: [NutritionInfo], isOrderScreenshot: Bool = false,
+         onConfirm: @escaping ([NutritionInfo]) -> Void) {
         self.onConfirm = onConfirm
+        self.isOrderScreenshot = isOrderScreenshot
         self._originalRecognizedList = State(initialValue: nutritionList)
         self._editableList = State(initialValue: nutritionList)
-        self._selectedItems = State(initialValue: Set(0..<nutritionList.count))
+        self._selectedItems = State(initialValue: isOrderScreenshot ? [] : Set(0..<nutritionList.count))
     }
 
     private var totalCalories: Double {
@@ -3133,6 +3175,12 @@ struct MultipleFoodConfirmationView: View {
                 VStack(spacing: 8) {
                     Text("识别到 \(editableList.count) 种食物")
                         .font(.headline)
+                    if isOrderScreenshot {
+                        Text("订单不代表已摄入。请选择实际吃过的食物，并核对份量及估算值。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
                     Text("总热量: \(Int(totalCalories)) kcal")
                         .font(.subheadline)
                         .foregroundStyle(.orange)
