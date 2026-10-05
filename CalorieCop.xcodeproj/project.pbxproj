@@ -611,7 +611,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CALORIECOP_SOURCE_COMMIT = development;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -631,7 +631,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.49;
+				MARKETING_VERSION = 1.0.52;
 				PRODUCT_BUNDLE_IDENTIFIER = com.zyyang116.caloriecapture;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -650,7 +650,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CALORIECOP_SOURCE_COMMIT = development;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -670,7 +670,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.49;
+				MARKETING_VERSION = 1.0.52;
 				PRODUCT_BUNDLE_IDENTIFIER = com.zyyang116.caloriecapture;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -687,7 +687,7 @@
 				CODE_SIGN_ENTITLEMENTS = CalorieCaptureWidget/CalorieCaptureWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = CalorieCaptureWidget/Info.plist;
@@ -697,7 +697,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.49;
+				MARKETING_VERSION = 1.0.52;
 				PRODUCT_BUNDLE_IDENTIFIER = com.zyyang116.caloriecapture.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;
@@ -715,7 +715,7 @@
 				CODE_SIGN_ENTITLEMENTS = CalorieCaptureWidget/CalorieCaptureWidget.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 50;
+				CURRENT_PROJECT_VERSION = 52;
 				DEVELOPMENT_TEAM = T787QKW8X8;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = CalorieCaptureWidget/Info.plist;
@@ -725,7 +725,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.49;
+				MARKETING_VERSION = 1.0.52;
 				PRODUCT_BUNDLE_IDENTIFIER = com.zyyang116.caloriecapture.widget;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SKIP_INSTALL = YES;

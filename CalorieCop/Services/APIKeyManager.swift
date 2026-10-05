@@ -68,7 +68,7 @@ enum TextParsingModel: String, CaseIterable, Identifiable {
 
     var apiModelName: String {
         switch self {
-        case .flash: return "deepseek-v4-flash"
+        case .flash: return "deepseek-flash"
         case .highspeed: return "MiniMax-M2.7-highspeed"
         case .pro: return "deepseek-v4-pro"
         }
@@ -255,7 +255,7 @@ enum APIKeyManager {
         URL(string: "https://api.deepseek.com/chat/completions")!
     }
 
-    /// Responses API supports both server-side web search and vision input.
+    /// DeepSeek Responses API endpoint for text and image recognition.
     static var deepSeekResponsesEndpoint: URL {
         URL(string: "https://api.deepseek.com/responses")!
     }

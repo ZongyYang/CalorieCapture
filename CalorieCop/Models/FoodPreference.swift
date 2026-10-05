@@ -264,6 +264,26 @@ final class FoodPreference {
             && Self.normalizedOptionalText(self.brand) == Self.normalizedOptionalText(brand)
     }
 
+    func matchesSearchQuery(_ query: String) -> Bool {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return false }
+        return keyword.localizedCaseInsensitiveContains(query)
+            || (brand?.localizedCaseInsensitiveContains(query) ?? false)
+    }
+
+    /// Search-only de-duplication: an omitted brand must not make a saved food
+    /// appear again as an unsaved entry. Keep explicit, different brands separate.
+    /// Do not use this relaxed comparison when updating or deleting stored data.
+    func representsSearchEntry(foodName: String, brand candidateBrand: String?) -> Bool {
+        let savedName = Self.normalizedText(keyword)
+        let entryName = Self.normalizedText(foodName)
+        guard !savedName.isEmpty, savedName == entryName else { return false }
+
+        let savedBrand = Self.normalizedOptionalText(brand)
+        let entryBrand = Self.normalizedOptionalText(candidateBrand)
+        return savedBrand == nil || entryBrand == nil || savedBrand == entryBrand
+    }
+
     func similarityScore(foodName: String, brand candidateBrand: String?) -> Double {
         let savedName = Self.searchNormalizedText(keyword)
         let candidateName = Self.searchNormalizedText(foodName)

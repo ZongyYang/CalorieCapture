@@ -972,13 +972,10 @@ struct FoodInputView: View {
     }
 
     private var filteredPreferences: [FoodPreference] {
-        if preferenceSearchText.isEmpty {
+        if preferenceSearchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return foodPreferences
         }
-        return foodPreferences.filter {
-            $0.keyword.localizedCaseInsensitiveContains(preferenceSearchText)
-                || ($0.brand?.localizedCaseInsensitiveContains(preferenceSearchText) ?? false)
-        }
+        return foodPreferences.filter { $0.matchesSearchQuery(preferenceSearchText) }
     }
 
     private var canRecognizeFromSearch: Bool {
@@ -1006,7 +1003,6 @@ struct FoodInputView: View {
     private var unsavedEntrySuggestions: [FoodEntry] {
         allEntries.unsavedSearchSuggestions(
             matching: preferenceSearchText,
-            on: effectiveDate,
             excluding: foodPreferences
         )
     }
@@ -1105,7 +1101,7 @@ struct FoodInputView: View {
             }
 
             if !unsavedEntrySuggestions.isEmpty {
-                TodayEntrySuggestionPanel(
+                UnsavedEntrySuggestionPanel(
                     entries: unsavedEntrySuggestions,
                     onSelect: { entry in
                         editingSuggestedEntry = entry
@@ -1253,7 +1249,10 @@ struct FoodInputView: View {
                 errorMessage = "未能识别任何食物"
             }
         } catch {
-            errorMessage = error.localizedDescription
+            let provider = selectedImage == nil
+                ? APIKeyManager.textParsingModel.providerName
+                : "DeepSeek"
+            errorMessage = AIServiceError.userFacingMessage(for: error, provider: provider)
         }
 
         isLoading = false
@@ -1946,7 +1945,7 @@ struct SavedPreferenceSuggestionPanel: View {
     }
 }
 
-struct TodayEntrySuggestionPanel: View {
+struct UnsavedEntrySuggestionPanel: View {
     let entries: [FoodEntry]
     let onSelect: (FoodEntry) -> Void
     let onSavePreference: (FoodEntry) -> Void
@@ -1954,7 +1953,7 @@ struct TodayEntrySuggestionPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("当日未保存")
+            Text("历史未保存")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)

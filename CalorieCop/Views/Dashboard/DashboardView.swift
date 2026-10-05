@@ -127,10 +127,7 @@ struct DashboardView: View {
 
         return Array(
             foodPreferences
-                .filter {
-                    $0.keyword.localizedCaseInsensitiveContains(query)
-                        || ($0.brand?.localizedCaseInsensitiveContains(query) ?? false)
-                }
+                .filter { $0.matchesSearchQuery(query) }
                 .sorted { lhs, rhs in
                     if lhs.usageCount != rhs.usageCount {
                         return lhs.usageCount > rhs.usageCount
@@ -145,7 +142,6 @@ struct DashboardView: View {
         guard dashboardSelectedImage == nil else { return [] }
         return allEntries.unsavedSearchSuggestions(
             matching: dashboardSearchText,
-            on: Date(),
             excluding: foodPreferences
         )
     }
@@ -447,7 +443,7 @@ struct DashboardView: View {
             }
 
             if !unsavedEntrySuggestions.isEmpty {
-                TodayEntrySuggestionPanel(
+                UnsavedEntrySuggestionPanel(
                     entries: unsavedEntrySuggestions,
                     onSelect: { entry in
                         editingSuggestedEntry = entry
@@ -579,7 +575,13 @@ struct DashboardView: View {
             } catch {
                 await MainActor.run {
                     isDashboardRecognizing = false
-                    dashboardRecognitionError = error.localizedDescription
+                    let provider = selectedImage == nil
+                        ? APIKeyManager.textParsingModel.providerName
+                        : "DeepSeek"
+                    dashboardRecognitionError = AIServiceError.userFacingMessage(
+                        for: error,
+                        provider: provider
+                    )
                 }
             }
         }

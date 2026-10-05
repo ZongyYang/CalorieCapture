@@ -206,23 +206,23 @@ final class FoodEntry {
 extension Array where Element == FoodEntry {
     func unsavedSearchSuggestions(
         matching query: String,
-        on date: Date,
         excluding preferences: [FoodPreference],
         limit: Int = 3
     ) -> [FoodEntry] {
         let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedQuery.isEmpty, limit > 0 else { return [] }
 
-        let calendar = Calendar.current
+        // Only suppress a record if its saved counterpart also matches this search.
+        // A brand-only search may not find an otherwise matching unbranded habit.
+        let matchingPreferences = preferences.filter { $0.matchesSearchQuery(trimmedQuery) }
         var seenFoods: Set<String> = []
         var suggestions: [FoodEntry] = []
 
         for entry in sorted(by: { $0.createdAt > $1.createdAt }) {
-            guard calendar.isDate(entry.createdAt, inSameDayAs: date),
-                  entry.foodName.localizedCaseInsensitiveContains(trimmedQuery)
+            guard entry.foodName.localizedCaseInsensitiveContains(trimmedQuery)
                     || (entry.brand?.localizedCaseInsensitiveContains(trimmedQuery) ?? false),
-                  !preferences.contains(where: {
-                      $0.matches(keyword: entry.foodName, brand: entry.brand)
+                  !matchingPreferences.contains(where: {
+                      $0.representsSearchEntry(foodName: entry.foodName, brand: entry.brand)
                   }) else {
                 continue
             }

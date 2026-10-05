@@ -128,7 +128,7 @@ final class MiniMaxService: AIServiceProtocol {
     private var qwenEndpoint: URL { APIKeyManager.qwenEndpoint }
     // MiniMax-M2.7-highspeed for text parsing
     private let qwenTextModel = "qwen-plus"
-    private let deepSeekVisionModel = "deepseek-v4-flash-vision-exp"
+    private let deepSeekVisionModel = "deepseek-flash"
     private let logger = DebugLogger.shared
 
     func parseFoodInput(_ input: String) async throws -> NutritionInfo {
@@ -337,8 +337,7 @@ final class MiniMaxService: AIServiceProtocol {
         )
     }
 
-    /// Uses DeepSeek's Responses API so the model can automatically look up
-    /// branded or otherwise uncertain food details before returning nutrition JSON.
+    /// Uses DeepSeek's Responses API for text and image nutrition recognition.
     private func requestDeepSeekResponse(
         model: String,
         systemPrompt: String,
@@ -354,10 +353,6 @@ final class MiniMaxService: AIServiceProtocol {
             "input": [["role": "user", "content": content]],
             "reasoning": ["effort": reasoningEffort],
             "temperature": 0.1,
-            // The server decides whether a search is useful, so simple meals do
-            // not always pay the latency cost of a web lookup.
-            "tools": [["type": "web_search"]],
-            "tool_choice": "auto",
             "stream": false
         ]
 
@@ -369,10 +364,10 @@ final class MiniMaxService: AIServiceProtocol {
         let metadata = imageBytes.map { ", imageBytes=\($0)" } ?? ""
         logger.logAPIRequest(
             endpoint: deepSeekResponsesEndpoint.absoluteString,
-            body: "model=\(model), webSearch=auto\(metadata)"
+            body: "model=\(model)\(metadata)"
         )
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await sendDeepSeekRequest(request, context: context)
         guard let httpResponse = response as? HTTPURLResponse else {
             throw AIServiceError.invalidResponse
         }
@@ -380,7 +375,7 @@ final class MiniMaxService: AIServiceProtocol {
         let rawString = String(data: data, encoding: .utf8) ?? "无法解码响应"
         logger.logAPIResponse(statusCode: httpResponse.statusCode, body: rawString)
         guard (200...299).contains(httpResponse.statusCode) else {
-            throw AIServiceError.parsingError("DeepSeek API Error (\(httpResponse.statusCode)): \(rawString.prefix(300))")
+            throw deepSeekHTTPError(statusCode: httpResponse.statusCode, response: rawString)
         }
 
         let deepSeekResponse: DeepSeekResponsesResponse
@@ -402,6 +397,57 @@ final class MiniMaxService: AIServiceProtocol {
         }
 
         return try decodeNutritionList(from: outputText, context: context)
+    }
+
+    private func sendDeepSeekRequest(_ request: URLRequest, context: String) async throws -> (Data, URLResponse) {
+        var lastError: Error?
+
+        for attempt in 0..<2 {
+            do {
+                return try await URLSession.shared.data(for: request)
+            } catch {
+                lastError = error
+                guard attempt == 0, Self.isTransientNetworkError(error) else {
+                    throw error
+                }
+
+                logger.log("DeepSeek request interrupted; retrying once (\(context)): \(error.localizedDescription)")
+                try await Task.sleep(nanoseconds: 700_000_000)
+            }
+        }
+
+        throw lastError ?? AIServiceError.invalidResponse
+    }
+
+    private static func isTransientNetworkError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else { return false }
+
+        return [
+            URLError.networkConnectionLost.rawValue,
+            URLError.timedOut.rawValue,
+            URLError.cannotConnectToHost.rawValue,
+            URLError.notConnectedToInternet.rawValue,
+            URLError.dnsLookupFailed.rawValue
+        ].contains(nsError.code)
+    }
+
+    private func deepSeekHTTPError(statusCode: Int, response: String) -> AIServiceError {
+        let detail = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch statusCode {
+        case 401, 403:
+            return .parsingError("DeepSeek API 密钥无效或没有调用权限，请到 API 设置中检查密钥。")
+        case 402:
+            return .parsingError("DeepSeek 账户余额不足或 API 服务未开通，请检查账户额度。")
+        case 429:
+            return .parsingError("DeepSeek API 当前请求过多，请稍等片刻后重试。")
+        case 400, 404, 422:
+            return .parsingError("DeepSeek 拒绝了本次识别请求（HTTP \(statusCode)）：\(detail.prefix(240))")
+        case 500...599:
+            return .parsingError("DeepSeek 服务暂时异常（HTTP \(statusCode)），请稍后重试。")
+        default:
+            return .parsingError("DeepSeek API 请求失败（HTTP \(statusCode)）：\(detail.prefix(240))")
+        }
     }
 
     private struct DeepSeekResponsesResponse: Decodable {
