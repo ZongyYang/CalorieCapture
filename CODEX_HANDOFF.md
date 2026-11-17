@@ -110,15 +110,26 @@ The current local repository has:
 
 - `origin` pointing to `ZongyYang/CalorieCapture`.
 - `upstream` pointing to the original `kaka-jun/CalorieCop` project.
-- Working branch: `main`.
+- Working branch: `agent/sync-calorie-ui-updates`.
+
+The repository-root `AGENTS.md` is the durable Codex development agreement. Codex reads it when a new session starts in this repository, including on another Mac after the file has been pulled from GitHub.
+
+For every source-code or Xcode-project configuration change, use this delivery order:
+
+1. Build successfully.
+2. Install the build on the connected iPhone without changing the bundle identifier.
+3. Confirm installation succeeds and preserves the existing app container.
+4. Review the relevant diff, commit the focused change, and push it to `origin`.
+
+If build or installation fails, do not present the change as delivered or push it as the completed version. Explain and fix the failure first. Documentation-only changes do not need an iPhone build.
 
 On the current Mac before switching computers:
 
 ```bash
 git status
-git add .
+git add <relevant-files>
 git commit -m "Describe the change"
-git push origin main
+git push origin agent/sync-calorie-ui-updates
 ```
 
 On the other Mac:
@@ -126,10 +137,12 @@ On the other Mac:
 ```bash
 git clone https://github.com/ZongyYang/CalorieCapture.git
 cd CalorieCapture
+git checkout agent/sync-calorie-ui-updates
+git pull --ff-only origin agent/sync-calorie-ui-updates
 open CalorieCop.xcodeproj
 ```
 
-Before starting new work on either Mac, pull the latest `main`. After editing, commit and push. Avoid editing the same files on both Macs at the same time. Do not use `git reset --hard` or discard changes without checking them first.
+After pulling, start a new Codex session from the repository root so it loads `AGENTS.md`. Before starting new work on either Mac, pull the latest branch. After editing, build, install to the iPhone, then commit and push. Avoid editing the same files on both Macs at the same time. Do not use `git reset --hard` or discard changes without checking them first.
 
 ## Verification Checklist
 

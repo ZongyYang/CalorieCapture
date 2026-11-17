@@ -15,6 +15,37 @@ enum AIServiceError: LocalizedError {
     case parsingError(String)
     case chatError(String)
 
+    static func userFacingMessage(for error: Error, provider: String) -> String {
+        if let serviceError = error as? AIServiceError {
+            if case .networkError(let underlyingError) = serviceError {
+                return userFacingMessage(for: underlyingError, provider: provider)
+            }
+            return serviceError.errorDescription ?? "AI 请求失败，请重试。"
+        }
+
+        let nsError = error as NSError
+        guard nsError.domain == NSURLErrorDomain else {
+            return error.localizedDescription
+        }
+
+        switch nsError.code {
+        case URLError.notConnectedToInternet.rawValue:
+            return "当前设备未连接互联网，请检查 Wi‑Fi 或蜂窝网络后重试。"
+        case URLError.networkConnectionLost.rawValue:
+            return "连接 \(provider) 服务时网络中断，请切换 Wi‑Fi/蜂窝网络或检查 VPN 后重试。"
+        case URLError.timedOut.rawValue:
+            return "连接 \(provider) 服务超时，请检查网络后重试。"
+        case URLError.cannotFindHost.rawValue, URLError.dnsLookupFailed.rawValue:
+            return "无法解析 \(provider) 服务地址，请检查网络或 VPN 设置。"
+        case URLError.cannotConnectToHost.rawValue:
+            return "暂时无法连接 \(provider) 服务，请稍后重试或检查网络/VPN。"
+        case URLError.secureConnectionFailed.rawValue, URLError.serverCertificateUntrusted.rawValue:
+            return "与 \(provider) 服务建立安全连接失败，请检查设备日期时间及网络代理设置。"
+        default:
+            return "连接 \(provider) 服务失败（网络错误 \(nsError.code)），请检查网络后重试。"
+        }
+    }
+
     var errorDescription: String? {
         switch self {
         case .apiKeyNotConfigured:

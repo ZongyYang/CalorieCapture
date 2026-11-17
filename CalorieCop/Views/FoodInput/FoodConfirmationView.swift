@@ -21,7 +21,7 @@ struct FoodConfirmationView: View {
     let initialCategory: FoodEntryCategory
     let initialMealType: FoodMealType?
     let initialEnergyUnit: EnergyUnit
-    let onConfirm: (NutritionInfo, FoodEntryCategory, FoodMealType?) -> Void
+    let onConfirm: (NutritionInfo, FoodEntryCategory, FoodMealType?) -> FoodEntry?
 
     init(
         rawInput: String,
@@ -29,7 +29,7 @@ struct FoodConfirmationView: View {
         initialCategory: FoodEntryCategory = .meal,
         initialMealType: FoodMealType? = nil,
         initialEnergyUnit: EnergyUnit = .kilocalorie,
-        onConfirm: @escaping (NutritionInfo, FoodEntryCategory, FoodMealType?) -> Void
+        onConfirm: @escaping (NutritionInfo, FoodEntryCategory, FoodMealType?) -> FoodEntry?
     ) {
         self.rawInput = rawInput
         self.originalNutrition = originalNutrition
@@ -58,6 +58,10 @@ struct FoodConfirmationView: View {
     @State private var matchedPreferenceID: UUID?
     @State private var matchedPreferenceKind: FoodPreferenceMatchKind?
     @State private var addAsNewPreference = false
+    @State private var savedPreference: FoodPreference?
+    @State private var recordedEntry: FoodEntry?
+    @State private var actionToastMessage: String?
+    @State private var actionToastID = UUID()
 
     private var quantityUnit: String {
         category.quantityUnitSymbol
@@ -79,8 +83,8 @@ struct FoodConfirmationView: View {
         addAsNewPreference ? nil : matchedPreference
     }
 
-    private var hasExistingPreference: Bool {
-        targetExistingPreference != nil
+    private var isPreferenceSaved: Bool {
+        savedPreference != nil
     }
 
     private var canSavePreference: Bool {
@@ -130,11 +134,10 @@ struct FoodConfirmationView: View {
 
                     // Save as preference section
                     preferenceSection
-
-                    actionSection
                 }
                 .padding()
             }
+            .background(AppSurfaceStyle.pageBackground)
             .navigationTitle("识别结果")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -159,15 +162,39 @@ struct FoodConfirmationView: View {
                 ) {
                     matchedPreferenceID = match.preference.id
                     matchedPreferenceKind = match.kind
+                    savedPreference = match.preference
                     applyMatchedPreference(match.preference)
                 }
             }
             .onChange(of: addAsNewPreference) { _, shouldCreateNew in
                 if shouldCreateNew {
+                    savedPreference = nil
                     applyOriginalNutrition()
                 } else if let matchedPreference {
+                    savedPreference = matchedPreference
                     applyMatchedPreference(matchedPreference)
                 }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                actionSection
+                    .padding(.horizontal)
+                    .padding(.top, 10)
+                    .padding(.bottom, 8)
+                    .background(.regularMaterial)
+            }
+        }
+        .overlay {
+            if let actionToastMessage {
+                Text(actionToastMessage)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 13)
+                    .background(Color.black.opacity(0.78))
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: .black.opacity(0.22), radius: 10, x: 0, y: 4)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
     }
@@ -207,7 +234,9 @@ struct FoodConfirmationView: View {
         category = initialCategory
         mealType = initialMealType ?? FoodMealType.defaultType(for: originalNutrition.entryDate)
         preferenceKeyword = originalNutrition.foodName
-        preferenceDescription = "\(originalNutrition.grams.formattedGrams)\(initialCategory.quantityUnitSymbol)\(originalNutrition.foodName)"
+        preferenceDescription = originalNutrition.grams > 0
+            ? "\(originalNutrition.grams.formattedGrams)\(initialCategory.quantityUnitSymbol)\(originalNutrition.foodName)"
+            : "\(originalNutrition.calories.formattedCalories)kcal \(originalNutrition.foodName)"
     }
 
     private func applyMatchedPreference(_ preference: FoodPreference) {
@@ -249,17 +278,41 @@ struct FoodConfirmationView: View {
     private func recordIntake() {
         focusedField = nil
         editingField = nil
-        onConfirm(
+
+        guard let entry = onConfirm(
             editedNutrition,
             category,
             category == .meal ? mealType : nil
-        )
+        ) else { return }
+
+        withAnimation(.easeInOut(duration: 0.18)) {
+            recordedEntry = entry
+        }
         dismiss()
+    }
+
+    private func deleteRecordedIntake() {
+        focusedField = nil
+        editingField = nil
+
+        guard let recordedEntry else { return }
+        modelContext.delete(recordedEntry)
+
+        do {
+            try modelContext.save()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                self.recordedEntry = nil
+            }
+            showActionToast("已删除摄入")
+        } catch {
+            preferenceSaveMessage = error.localizedDescription
+        }
     }
 
     private func savePreference() {
         focusedField = nil
         editingField = nil
+        preferenceSaveMessage = nil
 
         let keyword = preferenceKeyword.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !keyword.isEmpty else {
@@ -280,6 +333,7 @@ struct FoodConfirmationView: View {
             : description
 
         // Update an exact/similar match when selected; otherwise create a new habit.
+        let preferenceToSave: FoodPreference
         if let existing = targetExistingPreference {
             let isSimilarMatch = matchedPreferenceKind == .similar
             // Update existing with new values
@@ -298,7 +352,7 @@ struct FoodConfirmationView: View {
                 fat: nutrition.fat
             )
             existing.usageCount += 1
-            preferenceSaveMessage = isSimilarMatch ? "已更新相似食物习惯" : "已更新食物习惯"
+            preferenceToSave = existing
         } else {
             // Create new with nutrition values
             let preference = FoodPreference(
@@ -316,14 +370,59 @@ struct FoodConfirmationView: View {
                 fat: nutrition.fat
             )
             modelContext.insert(preference)
-            preferenceSaveMessage = "已保存食物习惯"
+            preferenceToSave = preference
         }
 
         // Save immediately so it appears in the preferences list
         do {
             try modelContext.save()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                savedPreference = preferenceToSave
+                matchedPreferenceID = preferenceToSave.id
+                matchedPreferenceKind = .exact
+                addAsNewPreference = false
+            }
+            showActionToast("已保存习惯")
         } catch {
             preferenceSaveMessage = error.localizedDescription
+        }
+    }
+
+    private func deleteSavedPreference() {
+        focusedField = nil
+        editingField = nil
+        preferenceSaveMessage = nil
+
+        guard let savedPreference else { return }
+        modelContext.delete(savedPreference)
+
+        do {
+            try modelContext.save()
+            withAnimation(.easeInOut(duration: 0.18)) {
+                self.savedPreference = nil
+                matchedPreferenceID = nil
+                matchedPreferenceKind = nil
+                addAsNewPreference = false
+            }
+            showActionToast("已删除习惯")
+        } catch {
+            preferenceSaveMessage = error.localizedDescription
+        }
+    }
+
+    private func showActionToast(_ message: String) {
+        let toastID = UUID()
+        actionToastID = toastID
+
+        withAnimation(.easeInOut(duration: 0.2)) {
+            actionToastMessage = message
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            guard actionToastID == toastID else { return }
+            withAnimation(.easeInOut(duration: 0.25)) {
+                actionToastMessage = nil
+            }
         }
     }
 
@@ -343,7 +442,7 @@ struct FoodConfirmationView: View {
                     .padding(.vertical, 8)
                     .padding(.horizontal, 12)
                     .frame(maxWidth: 240)
-                    .background(Color(.systemBackground).opacity(0.85))
+                    .background(AppSurfaceStyle.formInputBackground)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .overlay {
                         RoundedRectangle(cornerRadius: 10)
@@ -370,12 +469,12 @@ struct FoodConfirmationView: View {
                         .focused($focusedField, equals: .grams)
                         .frame(width: 76)
                     Text(quantityUnit)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 }
                 .font(.headline)
                 .padding(.vertical, 8)
                 .padding(.horizontal, 12)
-                .background(Color(.systemBackground).opacity(0.85))
+                .background(AppSurfaceStyle.formInputBackground)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
                 .overlay {
                     RoundedRectangle(cornerRadius: 10)
@@ -387,7 +486,7 @@ struct FoodConfirmationView: View {
                     Text(quantityUnit)
                 }
                 .font(.headline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 .contentShape(Rectangle())
                 .onTapGesture {
                     beginEditing(.grams)
@@ -396,20 +495,25 @@ struct FoodConfirmationView: View {
 
             Text("原始输入: \(rawInput)")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(AppSurfaceStyle.formTertiaryText)
 
             BrandAutocompleteField(
                 text: $brand,
                 brands: knownBrands,
-                inputBackground: Color(.systemBackground).opacity(0.85),
+                inputBackground: AppSurfaceStyle.formInputBackground,
                 textAlignment: .center
             )
                 .frame(maxWidth: 240)
         }
         .frame(maxWidth: .infinity)
         .padding()
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, x: 0, y: 2)
     }
 
     private var nutritionSection: some View {
@@ -478,7 +582,7 @@ struct FoodConfirmationView: View {
         return HStack {
             Text(title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
             Spacer()
             Text("\(unitValue.formattedGrams) \(unit)/100\(quantityUnit)")
                 .font(.caption)
@@ -487,8 +591,12 @@ struct FoodConfirmationView: View {
                 .minimumScaleFactor(0.75)
         }
         .padding(10)
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.formInputBackground)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(AppSurfaceStyle.inputBorder, lineWidth: 1)
+        }
     }
 
     @ViewBuilder
@@ -503,7 +611,7 @@ struct FoodConfirmationView: View {
             VStack(spacing: 4) {
                 Text(title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
                 HStack(spacing: 2) {
                     TextField("0", text: value)
@@ -516,7 +624,7 @@ struct FoodConfirmationView: View {
 
                     Text(unit)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 }
             }
             .frame(maxWidth: .infinity)
@@ -550,7 +658,7 @@ struct FoodConfirmationView: View {
                 Text("类型")
                     .font(.subheadline)
                     .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
                 Picker("类型", selection: $category) {
                     ForEach(FoodEntryCategory.allCases) { category in
@@ -566,7 +674,7 @@ struct FoodConfirmationView: View {
                     Text("餐次")
                         .font(.subheadline)
                         .fontWeight(.medium)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
                     Picker("餐次", selection: $mealType) {
                         ForEach(FoodMealType.allCases) { mealType in
@@ -580,8 +688,13 @@ struct FoodConfirmationView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, x: 0, y: 2)
     }
 
     private func notesSection(_ notes: String) -> some View {
@@ -591,12 +704,17 @@ struct FoodConfirmationView: View {
 
             Text(notes)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, x: 0, y: 2)
     }
 
     private var confidenceIndicator: some View {
@@ -605,7 +723,7 @@ struct FoodConfirmationView: View {
                 .foregroundStyle(confidenceColor)
             Text("置信度: \(confidenceText)")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
             if hasManualChanges {
                 Text("(手动调整)")
@@ -618,6 +736,7 @@ struct FoodConfirmationView: View {
     private var confidenceIcon: String {
         if hasManualChanges { return "hand.raised.fill" }
         switch originalNutrition.confidence {
+        case "manual": return "hand.raised.fill"
         case "high": return "checkmark.circle.fill"
         case "medium": return "questionmark.circle.fill"
         default: return "exclamationmark.circle.fill"
@@ -627,6 +746,7 @@ struct FoodConfirmationView: View {
     private var confidenceColor: Color {
         if hasManualChanges { return .blue }
         switch originalNutrition.confidence {
+        case "manual": return .blue
         case "high": return .green
         case "medium": return .orange
         default: return .red
@@ -636,6 +756,7 @@ struct FoodConfirmationView: View {
     private var confidenceText: String {
         if hasManualChanges { return "手动" }
         switch originalNutrition.confidence {
+        case "manual": return "用户提供"
         case "high": return "高"
         case "medium": return "中"
         default: return "低"
@@ -655,63 +776,56 @@ struct FoodConfirmationView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("当我说...")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 TextField("关键词，如：咖啡牛奶", text: $preferenceKeyword)
                     .textFieldStyle(.roundedBorder)
 
                 Text("默认是指...")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 TextField("描述，如：150ml全脂牛奶", text: $preferenceDescription)
                     .textFieldStyle(.roundedBorder)
 
-                if let matchedPreference {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(
-                            addAsNewPreference
-                                ? "已找到食物习惯：\(matchedPreference.keyword)"
-                                : "已加载食物习惯：\(matchedPreference.keyword)",
-                            systemImage: addAsNewPreference ? "link" : "heart.fill"
-                        )
-                        .font(.caption)
-                        .foregroundStyle(addAsNewPreference ? Color.orange : Color.pink)
-
-                        Text(
-                            addAsNewPreference
-                                ? "当前保留 AI 识别结果，保存时将新建习惯。"
-                                : "当前使用该习惯已保存的名称、品牌和营养数据。"
-                        )
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-
-                        Toggle("添加为新的食物习惯", isOn: $addAsNewPreference)
-                            .font(.subheadline)
-                    }
+                if matchedPreference != nil {
+                    Toggle("添加为新的食物习惯", isOn: $addAsNewPreference)
+                        .font(.subheadline)
                 } else {
                     Label("尚未保存到食物习惯，可新建习惯", systemImage: "heart")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppSurfaceStyle.formSecondaryText)
                 }
             }
             .padding(.top, 4)
 
             if let preferenceSaveMessage {
-                Label(preferenceSaveMessage, systemImage: "checkmark.circle.fill")
+                Label(preferenceSaveMessage, systemImage: "exclamationmark.circle.fill")
                     .font(.caption)
-                    .foregroundStyle(preferenceSaveMessage.hasPrefix("已") ? .green : .red)
+                    .foregroundStyle(.red)
             }
         }
         .padding()
-        .background(Color(.systemGray6))
+        .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(AppSurfaceStyle.cardBorder, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 5, x: 0, y: 2)
     }
 
     private var actionSection: some View {
         HStack(spacing: 12) {
             Button {
-                savePreference()
+                if recordedEntry == nil {
+                    recordIntake()
+                } else {
+                    deleteRecordedIntake()
+                }
             } label: {
-                Label(hasExistingPreference ? "更新习惯" : "保存习惯", systemImage: "heart.fill")
+                Label(
+                    recordedEntry == nil ? "记录摄入" : "删除摄入",
+                    systemImage: recordedEntry == nil ? "plus.circle.fill" : "minus.circle.fill"
+                )
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
@@ -719,14 +833,20 @@ struct FoodConfirmationView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white)
-            .background(canSavePreference ? Color.pink : Color.gray)
+            .background(recordedEntry == nil ? Color.gray : Color.green)
             .clipShape(RoundedRectangle(cornerRadius: 12))
-            .disabled(!canSavePreference)
 
             Button {
-                recordIntake()
+                if isPreferenceSaved {
+                    deleteSavedPreference()
+                } else {
+                    savePreference()
+                }
             } label: {
-                Label("记录摄入", systemImage: "plus.circle.fill")
+                Label(
+                    isPreferenceSaved ? "删除习惯" : "保存习惯",
+                    systemImage: isPreferenceSaved ? "heart.fill" : "heart"
+                )
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .frame(maxWidth: .infinity)
@@ -734,8 +854,9 @@ struct FoodConfirmationView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.white)
-            .background(Color.green)
+            .background(isPreferenceSaved || canSavePreference ? Color.pink : Color.gray)
             .clipShape(RoundedRectangle(cornerRadius: 12))
+            .disabled(!isPreferenceSaved && !canSavePreference)
         }
     }
 }
@@ -752,7 +873,7 @@ struct EditableNutritionCard: View {
         VStack(spacing: 4) {
             Text(title)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppSurfaceStyle.formSecondaryText)
 
             HStack(spacing: 2) {
                 TextField("0", text: $value)
@@ -764,7 +885,7 @@ struct EditableNutritionCard: View {
 
                 Text(unit)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppSurfaceStyle.formSecondaryText)
             }
         }
         .frame(maxWidth: .infinity)
@@ -793,5 +914,6 @@ struct EditableNutritionCard: View {
         )
     ) { nutrition, category, mealType in
         print("Confirmed: \(nutrition.foodName), \(category.rawValue), \(mealType?.rawValue ?? "")")
+        return nil
     }
 }

@@ -1,6 +1,13 @@
 import SwiftUI
 
 enum AppSurfaceStyle {
+    // Form pages use a clean light canvas with darker grouped modules layered on top.
+    static let formPageBackground = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.black
+            : UIColor.systemBackground
+    })
+
     static let pageBackground = Color(uiColor: UIColor { traits in
         traits.userInterfaceStyle == .dark
             ? UIColor.black
@@ -19,6 +26,38 @@ enum AppSurfaceStyle {
         traits.userInterfaceStyle == .dark
             ? UIColor.systemGray6
             : UIColor.systemGray5
+    })
+
+    // Form controls sit one level above the card in dark mode, while light
+    // mode gets a subtle gray inset so white cards remain visually separated.
+    static let formInputBackground = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.systemGray5
+            : UIColor.systemGray6
+    })
+
+    static let formSecondaryText = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(white: 0.74, alpha: 1)
+            : UIColor.secondaryLabel
+    })
+
+    static let formTertiaryText = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(white: 0.58, alpha: 1)
+            : UIColor.tertiaryLabel
+    })
+
+    static let cardBorder = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.1)
+            : UIColor.black.withAlphaComponent(0.05)
+    })
+
+    static let inputBorder = Color(uiColor: UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor.white.withAlphaComponent(0.08)
+            : UIColor.black.withAlphaComponent(0.04)
     })
 }
 
@@ -161,6 +200,7 @@ struct CalorieBalanceView<SupplementaryContent: View>: View {
             }
         }
         .padding()
+        .frame(maxWidth: .infinity)
         .background(AppSurfaceStyle.cardBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16))
         .shadow(color: .black.opacity(0.1), radius: 5, x: 0, y: 2)
